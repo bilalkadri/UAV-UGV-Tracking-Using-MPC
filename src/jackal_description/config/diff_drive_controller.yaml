@@ -1,0 +1,29 @@
+jackal_velocity_controller:
+  ros__parameters:
+    left_wheel_names: ["front_left_wheel_joint", "rear_left_wheel_joint"]
+    right_wheel_names: ["front_right_wheel_joint", "rear_right_wheel_joint"]
+    wheel_separation: 0.36
+    wheels_per_side: 2
+    wheel_radius: 0.098
+    publish_rate: 50.0
+    odom_frame_id: odom
+    base_frame_id: base_link
+    open_loop: false
+    enable_odom_tf: false
+    use_stamped_vel: false   # simple CLI driving
+    cmd_vel_timeout: 0.25
+    preserve_turning_radius: true
+    publish_cmd: true
+    publish_wheel_data: true
+    linear.x.has_velocity_limits: true
+    linear.x.has_acceleration_limits: true
+    linear.x.max_velocity: 2.0
+    linear.x.min_velocity: -2.0
+    linear.x.max_acceleration: 20.0
+    linear.x.min_acceleration: -20.0
+    angular.z.has_velocity_limits: true
+    angular.z.has_acceleration_limits: true
+    angular.z.max_velocity: 4.0
+    angular.z.min_velocity: -4.0
+    angular.z.max_acceleration: 25.0
+    angular.z.min_acceleration: -25.0

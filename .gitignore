@@ -1,0 +1,37 @@
+# ROS 2 build artifacts
+build/
+install/
+log/
+logs/
+
+*.tlog
+*.bin
+*.csv
+
+
+
+# Junk accidentally inside src
+src/build/
+src/install/
+src/log/
+
+# ArduPilot / SITL artifacts
+mav.parm
+terrain/
+eeprom.bin
+
+# Generated / external tools
+Micro-XRCE-DDS-Gen/
+misc/
+
+# Editor / OS junk
+*.swp
+*~
+.DS_Store
+
+# Upstream ROS / ArduPilot repos (will be replaced by .repos)
+src/ardupilot/
+src/ros_gz/
+src/ardupilot_sitl_models/
+src/sdformat_urdf/
+src/micro_ros_agent/

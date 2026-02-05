@@ -1,0 +1,17 @@
+<robot name="test_box" xmlns:xacro="http://www.ros.org/wiki/xacro">
+  <link name="base_link">
+    <visual>
+      <geometry>
+        <box size="0.5 0.5 0.2"/>
+      </geometry>
+      <origin xyz="0 0 0.1"/>
+    </visual>
+  </link>
+
+  <link name="dummy_link"/>
+  <joint name="base_to_dummy" type="fixed">
+    <parent link="base_link"/>
+    <child link="dummy_link"/>
+    <origin xyz="0 0 0"/>
+  </joint>
+</robot>
