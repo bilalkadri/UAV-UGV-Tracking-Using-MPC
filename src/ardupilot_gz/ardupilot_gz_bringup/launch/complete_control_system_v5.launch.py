@@ -109,6 +109,17 @@ def generate_launch_description():
         ]
     )
 
+    plotting_for_jp_launch = TimerAction(
+        period=1.0,  # delay in seconds
+        actions=[
+            Node(
+                package='ardupilot_gz_bringup', # Replace with your actual package name if different
+                executable='plotting_for_JP_MBK.py',
+                parameters=[{'use_sim_time': use_sim_time}],
+                output='screen'
+            )
+        ]
+    )
 
     # Why this is necessary
     # In your SDF, the camera is defined in the pitch_link. However, OpenCV (and your ArUco code) expects coordinates in an Optical Frame (Z pointing out of the lens).
@@ -130,6 +141,8 @@ def generate_launch_description():
     )
 
 
+
+
    
 
     return LaunchDescription([
@@ -145,7 +158,8 @@ def generate_launch_description():
         Rect_Path, # this node moves the UGV in rectangular path
         camera_optical_tf,
         aruco_detection_launch,  # THis node is detetcting the ARUCO marker and then generating it's pose
-        rosbag_record
+        rosbag_record,
+        plotting_for_jp_launch
     ])
 
 

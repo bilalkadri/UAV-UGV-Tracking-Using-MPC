@@ -60,8 +60,11 @@ def generate_launch_description():
     pkg_ardupilot_sitl = get_package_share_directory("ardupilot_sitl")
     pkg_ardupilot_gazebo = get_package_share_directory("ardupilot_gazebo")
     pkg_project_bringup = get_package_share_directory("ardupilot_gz_bringup")
+    use_sim_time = LaunchConfiguration('use_sim_time', default='true')
 
-    # Include component launch files.
+
+
+
     sitl_dds = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
             [
@@ -75,6 +78,8 @@ def generate_launch_description():
             ]
         ),
         launch_arguments={
+            "use_sim_time": use_sim_time, # Pass it here
+            "synthetic_clock": "True",
             "transport": "udp4",
             "port": "2019",
             "synthetic_clock": "True",
@@ -122,17 +127,36 @@ def generate_launch_description():
         robot_desc = infp.read()
         # print(robot_desc)
 
+
+
     # Publish /tf and /tf_static.
     robot_state_publisher = Node(
         package="robot_state_publisher",
         executable="robot_state_publisher",
         name="robot_state_publisher",
         output="both",
+       
         parameters=[
             {"robot_description": robot_desc},
             {"frame_prefix": ""},
+            {"use_sim_time": True}, # Force True here
         ],
     )
+
+    # Bridge.
+    # bridge = Node(
+    #     package="ros_gz_bridge",
+    #     executable="parameter_bridge",
+    #     parameters=[
+    #         {
+    #             "config_file": os.path.join(
+    #                 pkg_project_bringup, "config", "iris_bridge.yaml"
+    #             ),
+    #             "qos_overrides./tf_static.publisher.durability": "transient_local",
+    #         }
+    #     ],
+    #     output="screen",
+    # )
 
     # Bridge.
     bridge = Node(
@@ -144,6 +168,7 @@ def generate_launch_description():
                     pkg_project_bringup, "config", "iris_bridge.yaml"
                 ),
                 "qos_overrides./tf_static.publisher.durability": "transient_local",
+                "use_sim_time": True,  # <--- Add this line here
             }
         ],
         output="screen",

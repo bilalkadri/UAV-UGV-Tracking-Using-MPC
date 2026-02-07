@@ -151,12 +151,17 @@ def generate_launch_description():
         launch_arguments={"gz_args": "-v4 -g"}.items(),
     )
 
-    # ----- Insert Iris robot (no second server) -----
+ 
+    # ----- Insert Iris robot -----
     iris = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
             str(Path(get_package_share_directory("ardupilot_gz_bringup"))
                 / "launch" / "robots" / "iris.launch.py")
-        )
+        ),
+        # Ensure the Iris launch knows to use simulation time
+        launch_arguments={
+            "use_sim_time": "true",
+        }.items(),
     )
 
     # RViz

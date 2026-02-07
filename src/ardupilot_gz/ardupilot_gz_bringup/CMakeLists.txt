@@ -43,6 +43,7 @@ install(PROGRAMS
   scripts/NMPC_Controller_v5.py
   scripts/Aruco_Detection_Node_v6.py
   scripts/ugv_rect_path_node_v2.py
+  scripts/plotting_for_JP_MBK.py
   DESTINATION lib/${PROJECT_NAME}
 )
 
