@@ -115,7 +115,7 @@ class Controller_for_UAV_Node(Node):
         # These are intentionally reduced to avoid violent corrections
         self.Q_pos = np.diag([
             10.0,   # x position weight (was 10.0)
-            10.0,   # y position weight (was 10.0)
+            100.0,   # y position weight (was 10.0)
             5.0    # z position weight (was 20.0)
         ])
 
@@ -712,7 +712,7 @@ class Controller_for_UAV_Node(Node):
         # print(f"Command direction should reduce these errors!")
         # print(f"=== END DEBUG ===\n")
 
-        self.debug_nmpc_status(x0, U, Xref)
+        # self.debug_nmpc_status(x0, U, Xref)
 
         # Final Command from MPC (Placeholder for original logic)
         self.publish_cmd([vx_cmd, vy_cmd, vz_cmd], yawdot_cmd)

@@ -1443,7 +1443,7 @@ class RelativePoseEKF(Node):
         # 2️⃣ Define desired offset from UGV (in UAV frame)
         # Better Strategy: If you find you keep losing the marker, try an offset of [-1.0, 0.0, -2.0].
         #  Being 1 meter behind gives the camera a better "look ahead" angle at the UGV.
-        desired_offset = np.array([0.0, 0.0, -2.0])  # negative x is "behind" in UAV frame
+        desired_offset = np.array([0.0, 0.0, 0.0])  # negative x is "behind" in UAV frame
 
 
 

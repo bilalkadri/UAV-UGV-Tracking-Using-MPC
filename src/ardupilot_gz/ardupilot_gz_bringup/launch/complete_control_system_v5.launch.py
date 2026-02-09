@@ -82,7 +82,7 @@ def generate_launch_description():
     
     Rect_Path= Node(
         package='ardupilot_gz_bringup',
-        executable='ugv_rect_path_node_v2.py',
+        executable='Moving_the_UGV.py',
         parameters=[{'use_sim_time': use_sim_time}], # Added param
         output='screen'
     )
@@ -113,7 +113,7 @@ def generate_launch_description():
         period=1.0,  # delay in seconds
         actions=[
             Node(
-                package='ardupilot_gz_bringup', # Replace with your actual package name if different
+                package='ardupilot_gz_bringup', 
                 executable='plotting_for_JP_MBK.py',
                 parameters=[{'use_sim_time': use_sim_time}],
                 output='screen'

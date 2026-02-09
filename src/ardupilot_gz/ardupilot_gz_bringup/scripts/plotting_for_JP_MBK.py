@@ -20,9 +20,14 @@ class PlottingForJP(Node):
         self.tf_buffer = tf2_ros.Buffer()
         self.tf_listener = tf2_ros.TransformListener(self.tf_buffer, self)
 
-        # Publishers (Common Frame: odom)
-        self.ugv_pub = self.create_publisher(PoseStamped, '/plotted/ugv_pose_in_odom_frame', 10)
-        self.uav_pub = self.create_publisher(PoseStamped, '/plotted/uav_pose_in_odom_frame', 10)
+        # Publishers (Common Frame: odom(ENU))
+        self.ugv_pub_in_odom_frame = self.create_publisher(PoseStamped, '/plotted/ugv_pose_in_odom_frame', 10)
+        self.uav_pub_in_odom_frame = self.create_publisher(PoseStamped, '/plotted/uav_pose_in_odom_frame', 10)
+
+        # Publishers (Common Frame: base_link (FLU))
+        self.ugv_pub_in_base_link_frame = self.create_publisher(PoseStamped, '/plotted/ugv_pose_in_base_link_frame', 10)
+        # self.uav_pub_in_base_link_frame = self.create_publisher(PoseStamped, '/plotted/uav_pose_in_base_link_frame', 10)
+
 
         # Subscriptions
         self.create_subscription(Odometry, '/jackal/jackal_velocity_controller/odom', self.ugv_callback, 10)
@@ -34,7 +39,7 @@ class PlottingForJP(Node):
 
 
 
-    def transform_and_publish_ugv(self, input_pose, target_frame, pub):
+    def transform_and_publish_ugv_in_odom_frame(self, input_pose, target_frame, pub):
         try:
             # Lookup transform from input frame to target odom frame
             transform = self.tf_buffer.lookup_transform(
@@ -55,7 +60,7 @@ class PlottingForJP(Node):
         except (tf2_ros.LookupException, tf2_ros.ConnectivityException, tf2_ros.ExtrapolationException) as e:
             self.get_logger().warn(f'Could not transform: {e}')
 
-    def transform_and_publish_uav(self, input_pose, target_frame, pub):
+    def transform_and_publish_uav_in_odom_frame(self, input_pose, target_frame, pub):
         try:
             # Lookup transform from input frame to target odom frame
             transform = self.tf_buffer.lookup_transform(
@@ -82,7 +87,7 @@ class PlottingForJP(Node):
         ugv_p = PoseStamped()
         ugv_p.header = msg.header
         ugv_p.pose = msg.pose.pose
-        self.transform_and_publish_ugv(ugv_p, 'odom', self.ugv_pub)
+        self.transform_and_publish_ugv_in_odom_frame(ugv_p, 'odom', self.ugv_pub_in_odom_frame)
 
     def uav_callback(self, msg):
         # A big confusion
@@ -96,7 +101,7 @@ class PlottingForJP(Node):
         # EKF Origin (where it was armed/turned on).
 
         # The ROS Message: Even though the frame_id says base_link, ArduPilot often populates 
-        # the pose field with the World Position (Local NED or Global) relative to that EKF
+        # the pose field with the World Position (Local NED) relative to that EKF
         # origin.
 
         # The Logical Mismatch: If you look at your echo output from earlier, your z value
@@ -116,7 +121,20 @@ class PlottingForJP(Node):
         t.header.frame_id = "odom"           # The Parent (World)
         t.child_frame_id = "uav/base_link"   # The Child (Drone)
 
-        # These values from ArduPilot are actually the World-coordinates
+        #--------------------------------------------------------------------------------------
+        # These values from ArduPilot are actually the World-coordinates (NED) frame (Google, ChatGPT)
+        # the uav position in the odom frame must be in ENU Frame.
+        #--------------------------------------------------------------------------------------
+
+
+        # The above statement is completely wrong, I have verified it in FoxGlove
+        # The /ap/pose filtered (although the frame name in ROS messages is base_link) but the
+        # values that are produced are in odom frame and in ENU . These values are not 
+        # in NED frame as stated above. 
+
+
+
+
         t.transform.translation.x = msg.pose.position.x
         t.transform.translation.y = msg.pose.position.y
         t.transform.translation.z = msg.pose.position.z
@@ -131,7 +149,7 @@ class PlottingForJP(Node):
         out.pose.position = msg.pose.position
         out.pose.orientation = msg.pose.orientation
         
-        self.uav_pub.publish(out)
+        self.uav_pub_in_odom_frame.publish(out)
         # self.transform_and_publish_uav(uav_p, 'odom', self.uav_pub)
 
 
