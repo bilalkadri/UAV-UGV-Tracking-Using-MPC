@@ -60,7 +60,7 @@ def generate_launch_description():
 
     ekf_trajectory_estimator_launch = Node(
         package='ardupilot_gz_bringup',
-        executable='Traj_Pred_EKF_Pub_v10.py',
+        executable='Traj_Pred_Using_Sensor_Data.py',
         parameters=[{'use_sim_time': use_sim_time}], # Linked to LaunchConfiguration
         output='screen'
     )

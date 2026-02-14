@@ -192,12 +192,12 @@ class ArucoDetector(Node):
             detected_msg.data = True
 
             # ===== Added print statements =====
-            print("===== ArUco Marker Detected =====")
-            print(f"Marker Center (pixels): x={cx:.2f}, y={cy:.2f}")
-            print(f"Marker Position (m): x={tvec[0]:.3f}, y={tvec[1]:.3f}, z={tvec[2]:.3f}")
-            print(f"Marker Orientation (quaternion): x={quat[0]:.3f}, y={quat[1]:.3f}, z={quat[2]:.3f}, w={quat[3]:.3f}")
-            print(f"Detection Status: {detected_msg.data}")
-            print("=================================")
+            # print("===== ArUco Marker Detected =====")
+            # print(f"Marker Center (pixels): x={cx:.2f}, y={cy:.2f}")
+            # print(f"Marker Position (m): x={tvec[0]:.3f}, y={tvec[1]:.3f}, z={tvec[2]:.3f}")
+            # print(f"Marker Orientation (quaternion): x={quat[0]:.3f}, y={quat[1]:.3f}, z={quat[2]:.3f}, w={quat[3]:.3f}")
+            # print(f"Detection Status: {detected_msg.data}")
+            # print("=================================")
 
         else:
             if self.tag_detected:
@@ -219,9 +219,9 @@ class ArucoDetector(Node):
             self.pose_pub.publish(null_pose)
 
             # print lost status
-            print("===== ArUco Marker Lost =====")
-            print("Detection Status: False")
-            print("==============================")
+            # print("===== ArUco Marker Lost =====")
+            # print("Detection Status: False")
+            # print("==============================")
 
         self.detected_pub.publish(detected_msg)
 

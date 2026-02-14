@@ -239,6 +239,9 @@ class RelativePoseEKF(Node):
         
         self.pub_rel_only_odom = self.create_publisher(PoseStamped, '/relative_pose_odom', 10) # publishing in base_link frame
    
+        # Publisher for odometry-based relative pose
+        #self.odom_rel_pub = self.create_publisher(PoseStamped, '/relative_pose_odom', 10)
+
         self.pub_rel_only_ekf = self.create_publisher(PoseStamped, '/relative_pose_ekf', 10) # publishing in base_link frame
           
         self.pred_pub = self.create_publisher(Path, '/predicted_trajectory', 10)
@@ -252,8 +255,7 @@ class RelativePoseEKF(Node):
         # Mode publisher for visualization
         self.mode_pub = self.create_publisher(String, '/tracking_mode', 10)
 
-        # Publisher for odometry-based relative pose
-        self.odom_rel_pub = self.create_publisher(PoseStamped, '/relative_pose_odom', 10)
+        
 
         #----------------------------------------------------------------------------------------
         #-------------------------------------Timer Functions-------------------------------------

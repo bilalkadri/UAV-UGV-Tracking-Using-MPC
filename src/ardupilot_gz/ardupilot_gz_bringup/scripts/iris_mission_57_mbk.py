@@ -108,7 +108,7 @@ class MPCVelocitySubscriber(Node):
     # ----------------------------------------------------------
     def cmd_callback(self, msg):
         
-        scale = 0.05
+        scale = 0.5
         #scale = 0.09
 
         vx_flu = msg.twist.linear.x*scale
