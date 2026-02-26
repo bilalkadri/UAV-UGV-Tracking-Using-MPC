@@ -475,8 +475,93 @@ class Controller_for_UAV_Node(Node):
             self.run_mpc_logic()
         elif self.mode == "PID":
             self.run_pid_logic()
+        elif self.mode== "Fuzzy-PID":
+            self.run_fuzzy_pid_logic()
         else:
             self.get_logger().error(f"Invalid mode: {self.mode}")
+
+    def run_fuzzy_pid_logic(self):
+
+        # --- Position Error ---
+        dx, dy, dz = self.ugv_position_in_odom_frame - self.uav_position_in_odom_frame
+        dyaw = self.ugv_yaw_in_odom_frame - self.uav_yaw_in_odom_frame
+
+        current_error = np.array([dx, dy, dz - 2.0, dyaw])
+
+        # --- Error norms for fuzzy scaling ---
+        e_pos_norm = np.linalg.norm(current_error[:3])
+        e_yaw_abs = abs(dyaw)
+
+        # --- Integral ---
+        self.error_integral += current_error * self.mpc_dt
+        self.error_integral = np.clip(self.error_integral, -1.0, 1.0)
+
+        # --- Derivative ---
+        error_derivative = (current_error - self.prev_error) / self.mpc_dt
+        self.prev_error = current_error
+
+        de_norm = np.linalg.norm(error_derivative[:3])
+
+        # =====================================================
+        # FUZZY GAIN SCALING
+        # =====================================================
+
+        # Normalize error (tune these thresholds)
+        e_scale = 3.0       # meters where error considered "large"
+        de_scale = 2.0      # m/s rate considered "fast"
+
+        e_ratio = np.clip(e_pos_norm / e_scale, 0.0, 1.5)
+        de_ratio = np.clip(de_norm / de_scale, 0.0, 1.5)
+
+        # --- Fuzzy Rules (smooth nonlinear functions) ---
+
+        # Large error → high Kp
+        kp_scale = 1.0 + 1.5 * e_ratio
+
+        # Small error → increase Ki
+        ki_scale = 1.0 + 1.0 * (1.0 - e_ratio)
+
+        # High derivative → increase Kd
+        kd_scale = 1.0 + 2.0 * de_ratio
+
+        # Apply scaling
+        kp_adapt = self.kp * kp_scale
+        ki_adapt = self.ki * ki_scale
+        kd_adapt = self.kd * kd_scale
+
+        # =====================================================
+        # PID Output
+        # =====================================================
+
+        output = (
+            kp_adapt * current_error
+            + ki_adapt * self.error_integral
+            + kd_adapt * error_derivative
+        )
+
+        vx_enu, vy_enu, vz_enu, wz_enu = output
+        yaw = self.uav_yaw_in_odom_frame
+
+        # ENU → FLU rotation (same as your working PID)
+        vx_flu =  vx_enu * np.cos(yaw) + vy_enu * np.sin(yaw)
+        vy_flu = -vx_enu * np.sin(yaw) + vy_enu * np.cos(yaw)
+        vz_flu =  vz_enu
+        wz_flu =  wz_enu
+
+        # Clip
+        vx = np.clip(vx_flu, -self.v_max, self.v_max)
+        vy = np.clip(vy_flu, -self.v_max, self.v_max)
+        vz = np.clip(vz_flu, -self.vz_max, self.vz_max)
+        wz = np.clip(wz_flu, -self.yawdot_max, self.yawdot_max)
+
+        if np.random.rand() < 0.1:
+            self.get_logger().info(
+                f"FuzzyPID | e_norm:{e_pos_norm:.2f} "
+                f"Kp_scale:{kp_scale:.2f} "
+                f"Cmd: Vx:{vx:.2f} Vy:{vy:.2f} Vz:{vz:.2f}"
+            )
+
+        self.publish_cmd([vx, vy, vz], wz)
 
     def run_pid_logic(self):
         
@@ -918,7 +1003,7 @@ def main(args=None):
     rclpy.init(args=args)
     
     # Selection logic
-    mode_selection = "PID"  # Set to "MPC" or "PID"
+    mode_selection = "Fuzzy-PID"  # Set to "MPC" or "PID" or "Fuzzy-PID"
     node = Controller_for_UAV_Node(mode=mode_selection)
     
     try:
