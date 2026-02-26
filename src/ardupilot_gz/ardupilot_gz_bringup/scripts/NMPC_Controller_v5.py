@@ -96,7 +96,7 @@ class Controller_for_UAV_Node(Node):
         # Prediction horizon length
         # Larger horizon → MPC plans further ahead and avoids aggressive short-term corrections
         # 20 is okay, but sluggish behavior benefits from a slightly longer horizon
-        self.N = 25
+        self.N = 35
 
 
         # Prediction time step (seconds)
@@ -122,9 +122,9 @@ class Controller_for_UAV_Node(Node):
         # High values force the UAV to correct position errors aggressively
         # These are intentionally reduced to avoid violent corrections
         self.Q_pos = np.diag([
-            5.0,    # x position (was 10)
-            15.0,    # y position (was 100 - THIS WAS YOUR MAIN SOURCE OF INSTABILITY)
-            10.0     # z position (was 5)
+            20.0,    # x position (was 10)
+            20.0,    # y position (was 100 - THIS WAS YOUR MAIN SOURCE OF INSTABILITY)
+            25.0     # z position (was 5)
         ])
 
 
@@ -137,7 +137,8 @@ class Controller_for_UAV_Node(Node):
         ])
 
 
-      
+
+   
         
         #----------------------------------------------------------------------------------------
         # Control smoothness penalties (INCREASED FOR DAMPING)
@@ -152,7 +153,8 @@ class Controller_for_UAV_Node(Node):
             100.0   # Δyaw_rate (was 30) - Smooth out rotations
         ])
 
-
+        # Control magnitude penalty
+        self.R_u = np.diag([50, 50, 80, 20])
         #----------------------------------------------------------------------------------------
         # Field-of-view / visibility constraint weight
         #----------------------------------------------------------------------------------------
@@ -225,6 +227,7 @@ class Controller_for_UAV_Node(Node):
 
         self.ugv_position_in_odom_frame =  [0.0, 2.0, 0.0]   # Store UGV position by transforming data from /jacakal/base_link to /odom frame 
         self.ugv_yaw_in_odom_frame=0.0
+        
 
         self.ugv_lin_vel_in_jackal_odom_frame = np.zeros(3)      # UGV velocity (jacakl/odom frame),
         self.ugv_ang_vel_in_jackal_odom_frame = np.zeros(3)  # UGV angular velocity (jackal/odom frame), 
@@ -232,6 +235,7 @@ class Controller_for_UAV_Node(Node):
 
         self.uav_position_in_odom_frame = np.zeros(3)
         self.uav_yaw_in_odom_frame = 0.0  # ⭐⭐ NEW: Store UAV yaw ⭐⭐
+        self.uav_yaw_in_base_link_frame=0.0
 
         self.uav_lin_vel_in_odom_frame = np.zeros(3)      # UAV velocity (body frame) ⭐⭐ CHANGED ⭐⭐
         self.uav_ang_vel_in_odom_frame = np.zeros(3)  # UAV angular velocity (body frame)
@@ -451,18 +455,26 @@ class Controller_for_UAV_Node(Node):
         # Updates self.uav_yaw with UAV's heading from quaternion (world frame)
         # Used later by ekf_predict_publish() for transformations and predictions
         # Header says: frame_id: base_link (UAV body frame)
-        # But coordinates are large: y: -27.095 suggests world frame
+        # But coordinates are large: y: -27.095 suggests world frame (odom)
         # Ardupilot often reports pose in local frame but labels it as base_link
-        # In practice: These are WORLD/NED coordinates (not body frame)
+        # In practice: These are WORLD coordinates (not body frame)
         # Conclusion: self.uav_position_in_odom_frame stores world coordinates despite confusing frame_id label
-        # Despite the frame_id saying base_link, the /ap/pose/filtered topic 
-        # is publishing the UAV's position in the World/Local frame i.e. /odom in this case.
+        # Despite the frame_id saying base_link, the msg.pose.position.x in 
+        # /ap/pose/filtered topic is publishing the UAV's position in the World frame i.e. /odom
+        # but there is something even more confusing, the msg.pose.orientation in /ap/pose/filtered 
+        # topic gives the yaw in base_link frame not in the odom frame, i need to verify this.....
         try:
             self.uav_position_in_odom_frame[0] = msg.pose.position.x
             self.uav_position_in_odom_frame[1] = msg.pose.position.y
             self.uav_position_in_odom_frame[2] = msg.pose.position.z
             # ⭐⭐ NEW: Extract UAV yaw ⭐⭐
+            # I am 100% that  msg.pose.orientation  in /ap/pose/filtered topic gives the 
+            # yaw in base_link frame
+            
             self.uav_yaw_in_odom_frame = get_yaw_from_quat(msg.pose.orientation)
+
+
+
         except Exception:
             self.get_logger().error("❌❌❌❌❌Exception in uav_pose_cb:❌❌❌❌❌\n" + traceback.format_exc())
    
@@ -724,184 +736,209 @@ class Controller_for_UAV_Node(Node):
         self.publish_cmd([vx_uav_flu, vy_uav_flu, vz_uav_flu], yawdot_uav_flu)
         
     # def _simulate_cost(self, x0, U, Xref):
-    #     # This is the "Option B" secret:
-    #     #  the error should be in odom frame, so that even if the drone twist and turn
-    #     #  the exact distance between the UAV and UGV is not affected
-    #     # Xref[k, 0:3] is the UGV position in odom frame obtained by transforming the  
-    #     # /relative_pose_odom_OR_ekf to odom frame(from FLU to ENU frame and then adding the UAV position),
-    #     # so effectively this is coming from Odometry+EKF
-    #     # x0 is the UAV position in odom frame
-    #     x_sim = x0.copy()  #x0 is the position of the UAV in the odom frame
 
+    #     # Copy initial state to avoid modifying original
+    #     x_sim = x0.copy()
+
+    #     # Convert position from ENU → NED
+    #     # ENU: [E, N, U]
+    #     # NED: [N, E, D]
+    #     print('x_sim in ENU frame= ',x_sim)
+    #     x_sim_ned = np.array([
+    #         x_sim[1],          # North  = ENU y
+    #         x_sim[0],          # East   = ENU x
+    #         -x_sim[2],         # Down   = -ENU z
+    #         x_sim[3],          # roll   (unchanged)
+    #         x_sim[4],          # pitch  (unchanged)
+    #         (np.pi/2.0) - x_sim[5]            # yaw ENU → NED
+    #     ])
+    #     print('x_sim in NED frame= ',x_sim_ned)
+
+    #     # Get measured world velocity (ENU frame)
+    #     curr_v_world = self.uav_lin_vel_in_odom_frame.copy()
+
+    #     # Convert velocity from ENU → NED
+    #     curr_v_ned = np.array([
+    #         curr_v_world[1],   # North
+    #         curr_v_world[0],   # East
+    #         -curr_v_world[2]   # Down
+    #     ])
+
+    #     # Initialize total cost
     #     total = 0.0
 
+    #     # First-order velocity response time constants
+    #     tau_xy = 0.1
+    #     tau_z  = 0.2
+
+    #     # Prediction loop
     #     for k in range(self.N):
-    #         # 1. ERROR CALCULATION (Absolute Error)
-    #         # Xref[k, 0:3] is in the odom frame
-    #         # Xref[k, 0:3] is the UGV position in odom frame obtained by transforming the  /relative_pose_odom_OR_ekf
-    #         # from FLU to ENU frame and then adding the UAV position, so efgfectivekly this is coming from Odometry+EKF
 
-    #         # x_sim ​: The predicted state vector of the UAV at time step k, 
-    #         # containing its position and velocity in the global frame:
-    #         # --- 1. Calculate Error FIRST (at the start of the step) ---
-    #         self.e_pos = Xref[k, 0:3]-x_sim[0:3]
+    #         # Convert reference position ENU → NED
+    #         ref_ned = np.array([
+    #             Xref[k, 1],     # North
+    #             Xref[k, 0],     # East
+    #             -Xref[k, 2]     # Down
+    #         ])
 
+    #         # Compute position error in NED frame
+    #         e_pos = ref_ned - x_sim_ned[0:3]
+    #         print("Position Error (ref_ned-x_sim_ned[0:3]):",e_pos)
+    #         # Accumulate quadratic position cost
+    #         total += e_pos.T @ self.Q_pos @ e_pos
 
-    #         if k == 0:
-    #             error_msg = PointStamped()
-    #             error_msg.header.stamp = self.get_clock().now().to_msg()
-    #             error_msg.header.frame_id = 'odom'
-    #             error_msg.point.x, error_msg.point.y, error_msg.point.z = self.e_pos.astype(float)
-    #             self.error_pub.publish(error_msg)
-           
-    #         # --- 2. Add to Cost ---
-    #         total += self.e_pos.T @ self.Q_pos @ self.e_pos
+    #         # Extract control inputs (given in FLU body frame)
+    #         vx_flu = U[k, 0]
+    #         vy_flu = U[k, 1]
+    #         vz_flu = U[k, 2]
+    #         yawrate = U[k, 3]
 
-    #         # --- 3. Predict NEXT state (Integrate) ---
-    #         yaw_sim = x_sim[5] 
-            
-    #         # --- 4. Get Control Inputs (UAV Body Frame i.e. FLU)
-    #         # The final control signal will always be in FLU frame
-    #         vx_uav = U[k, 0]  
-    #         vy_uav = U[k, 1]
-    #         vz_uav = U[k, 2]
-    #         yawrate_uav = U[k, 3]
+    #         # Convert FLU → FRD (required for MAV_FRAME_BODY_NED)
+    #         vx_frd = vx_flu
+    #         vy_frd = -vy_flu
+    #         vz_frd = -vz_flu
 
-    #         # ---5. TRANSFORM Control Signals i.e. Body Velocity in (FLU) to World Velocity 
-    #         # in (ENU)
-    #         # This is the "Option B" secret: since error was calculated in ENU , the prediction
-    #         # from the model must use odom frame velocities, we must convert from FLU to ENU
-    #         # We map Body (Forward/Left) to World (North/East)
-    #         vdx_world = vx_uav * np.cos(yaw_sim) - vy_uav * np.sin(yaw_sim)
-    #         vdy_world = vx_uav * np.sin(yaw_sim) + vy_uav * np.cos(yaw_sim)
-    #         vdz_world = vz_uav
+    #         # Get current yaw in NED (use directly, no sign flip)
+    #         yaw = x_sim_ned[5]
 
+    #         # Rotate body velocity (FRD) → world velocity (NED)
+    #         vx_ned = vx_frd * np.cos(yaw) - vy_frd * np.sin(yaw)
+    #         vy_ned = vx_frd * np.sin(yaw) + vy_frd * np.cos(yaw)
+    #         vz_ned = vz_frd
+    #         print('vx_flu=',vx_flu,'vy_flu=',vy_flu,'vz_flu=',vz_flu)
+    #         print('vx_frd=',vx_frd,'vy_frd=',vy_frd,'vz_frd=',vz_frd)
+    #         print('vx_ned=',vx_ned,'vy_ned=',vy_ned,'vz_ned=',vz_ned)
 
+    #         # First-order velocity dynamics (airframe lag)
+    #         curr_v_ned[0] += (self.pred_dt / tau_xy) * (vx_ned - curr_v_ned[0])
+    #         curr_v_ned[1] += (self.pred_dt / tau_xy) * (vy_ned - curr_v_ned[1])
+    #         curr_v_ned[2] += (self.pred_dt / tau_z)  * (vz_ned - curr_v_ned[2])
 
-    #         print('vdx_enu=',vdx_world,'vdy_enu=',vdy_world)
-    #         print('vx_flu=',vx_uav,'vdy_flu=',vy_uav)
-            
+    #         # Integrate position in NED frame
+    #         x_sim_ned[0] += curr_v_ned[0] * self.pred_dt   # North
+    #         x_sim_ned[1] += curr_v_ned[1] * self.pred_dt   # East
+    #         x_sim_ned[2] += curr_v_ned[2] * self.pred_dt   # Down
 
-            
-    #         # ---6. UPDATE World State (UAV Position in Odom)
-    #         # x_sim[0:3] are now UAV World Coordinates in odom frame
-           
-    #         x_sim[0] += vdx_world * self.pred_dt
-    #         x_sim[1] += vdy_world * self.pred_dt
-    #         x_sim[2] += vdz_world * self.pred_dt
-    #         x_sim[5] += yawrate_uav * self.pred_dt
-     
-        
-    #     # for k in range(self.N):
-    #     #     # Current relative orientation
-    #     #     roll, pitch, yaw = x_sim[3], x_sim[4], x_sim[5]
-    #     #     R_rel = rpy_to_rot(roll, pitch, yaw)  # UGV relative to UAV
-            
-    #     #     vk = U[k, 0:3]  # UAV velocity command in UAV body frame
-    #     #     yawdotk = U[k, 3]
-            
-    #     #     # ============= CORRECTED DYNAMICS =============
-    #     #     # Transform UGV velocity to UAV body frame
-    #     #     # v_g is in UGV body frame, need to transform to UAV body frame
-    #     #     # Simplified: Assume same orientation for now
-    #     #     v_g_uav_body = R_rel @ v_g  # Transform UGV velocity to UAV frame
-            
-    #     #     # Relative velocity: how relative position changes
-    #     #     # dx/dt = v_ugv_in_uav_frame - v_uav
-    #     #     rel_vel = v_g_uav_body - vk
-            
-    #     #     x_sim[0:3] = x_sim[0:3] + rel_vel * self.pred_dt
-            
-    #     #     # Angular: UGV should face UAV (yaw → 0)
-    #     #     # Simple: yaw_dot = -yaw (to reduce yaw error)
-    #     #     # rel_omega = np.array([0.0, 0.0, -yaw + yawdotk])
-    #     #     # x_sim[5] = x_sim[5] + rel_omega[2] * self.pred_dt
+    #         # Integrate yaw (positive yawrate = clockwise in NED)
+    #         x_sim_ned[5] += yawrate * self.pred_dt
+    #         #Angular wrap-around
+    #         x_sim_ned[5] = (x_sim_ned[5] + np.pi) % (2*np.pi) - np.pi
 
-    #     #     x_sim[5] = x_sim[5] + (w_g[2] - yawdotk) * self.pred_dt
-    #     #     # ==============================================
-            
-    #     #     # Position error
-    #     #     # ❌❌❌❌❌ I think this is the major problem ❌❌❌❌❌
-    #     #     # the error should be in odom frame, so that even if the drone twist and turn
-    #     #     # the exact distance between the UAV and UGV is not affected
-    #     #     # I need to correct this calculation
-    #     #     # x_sim is UGV position and orientation in UAV frame
-    #     #     # X_ref  is also self.ugv_pos_and_orient_in_UAV_frame[0:3]
-    #     #     e_pos = x_sim[0:3] - Xref[k, 0:3]
-    #     #     total += e_pos.T @ self.Q_pos @ e_pos
-            
-    #     #     # Yaw error only
-    #     #     yaw_error = wrap_angle(x_sim[5] - Xref[k, 5])
-    #     #     total += self.Q_ang[2, 2] * yaw_error**2
-            
-    #     #     # Control effort
-    #     #     total += U[k, :].T @ np.diag([0.1, 0.1, 0.1, 0.01]) @ U[k, :]
-            
-    #     #     # FOV cost
-    #     #     horiz_err = np.linalg.norm(x_sim[0:2])
-    #     #     total += self.W_fov * (horiz_err**2) / ((horiz_err**2) + (Xref[k, 2]**2) + 1e-6)
-        
-    #     # Smoothness
-    #     for k in range(self.N):
-    #         du = U[k, :] - (np.zeros(4) if k == 0 else U[k-1, :])
-    #         total += du.T @ self.R_du @ du
-        
-    #     return float(total)   
+    #     return total
 
     def _simulate_cost(self, x0, U, Xref):
-        # x0: [pos_x, pos_y, pos_z, roll, pitch, yaw]
-        x_sim = x0.copy() 
+        """
+        x0: [x, y, z, roll, pitch, yaw] in ENU frame (odom)
+        U: control inputs [vx_flu, vy_flu, vz_flu, yawrate] in FLU body frame
+        Xref: reference trajectory points [x, y, z] in ENU frame (odom)
+        """
         
-        # Initialize velocity states from your ODOM frame measurements
-        # We track these inside the loop to simulate momentum
-        curr_v_world = self.uav_lin_vel_in_odom_frame.copy() 
+        # Convert initial state from ENU to NED
+        x_sim_ned = np.array([
+            x0[1],           # North = ENU y
+            x0[0],           # East = ENU x
+            -x0[2],          # Down = -ENU z
+            x0[3],           # roll (unchanged)
+            x0[4],           # pitch (unchanged)
+            self.wrap_angle(-(np.pi/2.0) + x0[5]) # CORRECTED: ENU to NED yaw conversion
+            # self.wrap_angle(x0[5])
+        ])
+        
+        # Convert reference trajectory from ENU to NED
+        Xref_ned = np.zeros((self.N, 3))
+        for k in range(self.N):
+            Xref_ned[k] = np.array([
+                Xref[k, 1],   # North = ENU y
+                Xref[k, 0],   # East = ENU x
+                -Xref[k, 2]   # Down = -ENU z
+            ])
+        
+        # Convert velocity from ENU to NED
+        curr_v_world = self.uav_lin_vel_in_odom_frame.copy()
+        curr_v_ned = np.array([
+            curr_v_world[1],   # North
+            curr_v_world[0],   # East
+            -curr_v_world[2]   # Down
+        ])
+        curr_v_ned =np.zeros(3)
         
         total = 0.0
-
-        # Actuator/Airframe Time Constants (Damping factors)
-        tau = 0.1  # XY damping (higher = more overdamped/sluggish)
-        tau_z = 0.2 # Z damping
-
+        # This adds realistic lag → reduces overshoot.
+        tau_xy = 0.3
+        tau_z = 0.4
+        
+        print(f"Initial ENU yaw: {np.degrees(x0[5]):.1f}°")
+        print(f"Converted NED yaw: {np.degrees(x_sim_ned[5]):.1f}°")        
+        
         for k in range(self.N):
-            # 1. ERROR CALCULATION (Target - Current) in odom frame
-            self.e_pos = Xref[k, 0:3] - x_sim[0:3]
-            print("e_pos=",self.e_pos)
-            total += self.e_pos.T @ self.Q_pos @ self.e_pos
+            # Extract controls
+            vx_flu = U[k, 0]
+            vy_flu = U[k, 1]
+            vz_flu = U[k, 2]
+            yawrate = U[k, 3]
 
-            # 2. GET CONTROL INPUTS (UAV Body Frame FLU)
-            # These are the inputs for which i want to compute the cost
-            vx_uav_FLU = U[k, 0]
-            vy_uav_FLU = U[k, 1]
-            vz_uav_FLU = U[k, 2]
-            yawrate_uav_FLU = U[k, 3]
+            # Position error in NED
+            e_pos = Xref_ned[k] - x_sim_ned[0:3]
+            total += e_pos.T @ self.Q_pos @ e_pos
+            # Control magnitude penalty
+            u_vec = np.array([vx_flu, vy_flu, vz_flu, yawrate])
+            total += u_vec.T @ self.R_u @ u_vec
+            # print("Position Error (Xref_ned-x_sim_ned[0:3]):",e_pos)
+            
 
-            # 3. TRANSFORM COMMANDED Body Velocity to World Velocity
-            # since my model and the error all are in ENU frame , I have to convert the 
-            # the control signal which was in FLU to ENU frame 
-            yaw_uav_ENU = x_sim[5]
-            vx_uav_ENU = (vx_uav_FLU * np.cos(yaw_uav_ENU) - vy_uav_FLU * np.sin(yaw_uav_ENU))
-            vy_uav_ENU = (vx_uav_FLU * np.sin(yaw_uav_ENU) + vy_uav_FLU * np.cos(yaw_uav_ENU))
-            vz_uav_ENU = vz_uav_FLU # Assuming odom and body Z are aligned
+            # This adds damping.
+            # This is essential for tight behavior.
+            if k > 0:
+                du = U[k,:] - U[k-1,:]
+                total += du.T @ self.R_du @ du
+           
+            
+            # Convert FLU to FRD (body frame for NED)
+            vx_frd = vx_flu
+            vy_frd = -vy_flu
+            vz_frd = -vz_flu
+            
+            # Get current yaw in NED
+            yaw_ned = x_sim_ned[5]
+            
+            # Rotate body velocity (FRD) to world velocity (NED)
+            vx_ned = vx_frd * np.cos(yaw_ned) - vy_frd * np.sin(yaw_ned)
+            vy_ned = vx_frd * np.sin(yaw_ned) + vy_frd * np.cos(yaw_ned)
+            vz_ned = vz_frd
 
+            # print('vx_flu=',vx_flu,'vy_flu=',vy_flu,'vz_flu=',vz_flu)
+            # print('vx_frd=',vx_frd,'vy_frd=',vy_frd,'vz_frd=',vz_frd)
+            # print('vx_ned=',vx_ned,'vy_ned=',vy_ned,'vz_ned=',vz_ned)
+            
+            # Velocity dynamics
+            curr_v_ned[0] += (self.pred_dt / tau_xy) * (vx_ned - curr_v_ned[0])
+            curr_v_ned[1] += (self.pred_dt / tau_xy) * (vy_ned - curr_v_ned[1])
+            curr_v_ned[2] += (self.pred_dt / tau_z) * (vz_ned - curr_v_ned[2])
+            
+            # Integrate position
+            x_sim_ned[0] += curr_v_ned[0] * self.pred_dt
+            x_sim_ned[1] += curr_v_ned[1] * self.pred_dt
+            x_sim_ned[2] += curr_v_ned[2] * self.pred_dt
+            
+            # Integrate yaw (in NED: positive yawrate = clockwise)
+            x_sim_ned[5] += yawrate * self.pred_dt
+            x_sim_ned[5] = self.wrap_angle(x_sim_ned[5])
+            
+            #This forces drone to slow near target.
+            # Without velocity penalty, it will always overshoot.
+            total += 5.0 * (curr_v_ned.T @ curr_v_ned)
 
-
-            print('Inside the internal model: vx_enu=',vx_uav_ENU,'vy_enu=',vy_uav_ENU)
-            print('Inside the internal model: vx_flu=',vx_uav_FLU,'vy_flu=',vy_uav_FLU)
-
-            # 4. APPLY FIRST-ORDER DYNAMICS IN WORLD FRAME
-            # Instead of v = v_target, we simulate the acceleration lag
-            # dv = (v_target - v_current) / tau
-            curr_v_world[0] += (self.pred_dt / tau) * (vx_uav_ENU - curr_v_world[0])
-            curr_v_world[1] += (self.pred_dt / tau) * (vy_uav_ENU - curr_v_world[1])
-            curr_v_world[2] += (self.pred_dt / tau_z) * (vz_uav_ENU - curr_v_world[2])
-
-            # 5. UPDATE WORLD POSITION
-            x_sim[0] += curr_v_world[0] * self.pred_dt
-            x_sim[1] += curr_v_world[1] * self.pred_dt
-            x_sim[2] += curr_v_world[2] * self.pred_dt
-            x_sim[5] += yawrate_uav_FLU * self.pred_dt
-
+        # Terminal penalty
+        # This forces MPC to STOP at final point instead of blasting through.
+        e_terminal = Xref_ned[self.N-1] - x_sim_ned[0:3]
+        total += 20.0 * (e_terminal.T @ self.Q_pos @ e_terminal)
+        
         return total
+
+    def wrap_angle(self, angle):
+        """Wrap angle to [-π, π]"""
+        return (angle + np.pi) % (2 * np.pi) - np.pi
+
 
     # --- (Include all other helper functions like rel_pose_cb, quat_to_rpy, etc here) ---
     def rel_pose_cb(self, msg: PoseStamped):
