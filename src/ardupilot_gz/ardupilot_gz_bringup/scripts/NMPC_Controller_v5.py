@@ -19,6 +19,7 @@ import tf2_ros
 from tf2_ros import LookupException, ConnectivityException, ExtrapolationException
 from geometry_msgs.msg import Vector3
 from geometry_msgs.msg import PointStamped
+import math
 
 
 
@@ -103,14 +104,14 @@ class Controller_for_UAV_Node(Node):
         # This is the internal prediction resolution
         # Increasing this LOWERS controller bandwidth
         # 0.1 is fast; 0.15–0.2 makes motion smoother
-        self.pred_dt = 0.15
+        self.pred_dt = 0.015
 
 
         # MPC execution period (seconds)
         # How often the MPC is solved
         # Increasing this directly slows reaction speed
         # 0.1 → aggressive, 0.15–0.2 → sluggish and stable
-        self.mpc_dt = 0.15
+        self.mpc_dt = 0.015
 
 
    
@@ -122,8 +123,8 @@ class Controller_for_UAV_Node(Node):
         # High values force the UAV to correct position errors aggressively
         # These are intentionally reduced to avoid violent corrections
         self.Q_pos = np.diag([
-            5.0,    # x position (was 10)
-            15.0,    # y position (was 100 - THIS WAS YOUR MAIN SOURCE OF INSTABILITY)
+            0.500,    # x position (was 10)
+            0.500,    # y position (was 100 - THIS WAS YOUR MAIN SOURCE OF INSTABILITY)
             10.0     # z position (was 5)
         ])
 
@@ -153,10 +154,10 @@ class Controller_for_UAV_Node(Node):
         # THIS IS THE MOST IMPORTANT PART FOR SMOOTHNESS
         # Large values strongly discourage sudden control changes
         self.R_du = np.diag([
-            400.0,  # Δvx (was 200) - Heavy damping for longitudinal motion
-            400.0,  # Δvy (was 200) - Heavy damping to stop the Y-axis slamming
-            150.0,  # Δvz (was 80)  - Stop the vertical "bouncing"
-            100.0   # Δyaw_rate (was 30) - Smooth out rotations
+            20.0,  # Δvx (was 200) - Heavy damping for longitudinal motion
+            20.0,  # Δvy (was 200) - Heavy damping to stop the Y-axis slamming
+            7.50,  # Δvz (was 80)  - Stop the vertical "bouncing"
+            5.0   # Δyaw_rate (was 30) - Smooth out rotations
         ])
 
 
@@ -175,7 +176,7 @@ class Controller_for_UAV_Node(Node):
 
         # Maximum horizontal velocity (m/s)
         # Limiting velocity prevents aggressive chase behavior
-        self.v_max = 5.0     # was 20.0
+        self.v_max = 10.0     # was 20.0
 
 
         # Maximum vertical velocity (m/s)
@@ -576,9 +577,10 @@ class Controller_for_UAV_Node(Node):
                # Lookup transform: odom ← jackal/odom
             try:
                # Step 1: jackal/base_link ← jackal/odom
-                t1 = self.tf_buffer.lookup_transform('jackal/base_link', 'jackal/odom', rclpy.time.Time())
+                # t1 = self.tf_buffer.lookup_transform('target_frame', 'source_frame', rclpy.time.Time())
+                t1 = self.tf_buffer.lookup_transform('jackal/odom','jackal/base_link',rclpy.time.Time())
                 # Step 2: odom ← jackal/base_link
-                t2 = self.tf_buffer.lookup_transform('odom', 'jackal/base_link', rclpy.time.Time())
+                t2 = self.tf_buffer.lookup_transform('odom', 'jackal/odom', rclpy.time.Time())
 
             except (LookupException, ConnectivityException, ExtrapolationException) as e:
                 self.get_logger().warn(f"TF2 Lookup failed inside MPC: {e}")
@@ -602,23 +604,25 @@ class Controller_for_UAV_Node(Node):
                 # 2. Transform ONLY the .pose part
                 # pose_out will be a geometry_msgs.msg.Pose object
                 # Transform 1: Result is a Pose
-                pose_mid = do_transform_pose(pose_in.pose, t1)
+                pose_mid = do_transform_pose(pose_in.pose, t2) #transform from 'jackal/odom' -->'odom'
                 # print('pose_mid',pose_mid)
 
                 # Transform 2: Pass the result of Transform 1 directly
-                pose_final = do_transform_pose(pose_mid, t2)
+                # pose_final = do_transform_pose(pose_mid, t2)
 
                 # ⭐ ADD OFFSET HERE ⭐
-                pose_final.position.z += 2.0   #UAV flying at a constant altitude of 2.0 m
-                
+                # pose_final.position.z += 2.0   #UAV flying at a constant altitude of 2.0 m
+                pose_mid.position.z += 2.0   #UAV flying at a constant altitude of 2.0 m
+
                 # 3. Create a new PoseStamped to put into the Path
                 new_ps = PoseStamped()
                 new_ps.header = path_msg.header # Use the target frame 'odom'
-                new_ps.pose = pose_final
+                # new_ps.pose = pose_final
+                new_ps.pose = pose_mid
 
                 path_msg.poses.append(new_ps)
-
-            self.Xref_pred_pub.publish(path_msg)
+            #published in topic /Xref_MPC_in_Odom_frame_from_predicted_trajectory'
+            self.Xref_pred_pub.publish(path_msg) 
 
 
             num_points = min(len(path_msg.poses), self.N)
@@ -650,8 +654,8 @@ class Controller_for_UAV_Node(Node):
         #  the exact distance between the UAV and UGV is not affected
         # precompute base cost
         # x0[0:3] = UAV position in odom frame
-        # Xref[k, 0:3] is the UGV position in odom frame obtained by transforming the  /relative_pose_odom_OR_ekf
-        # from FLU to ENU frame and then adding the UAV position, so effectively this is coming from Odometry+EKF
+        # Xref[k, 0:3] is Xref_pred_pub which publishes on /Xref_MPC_in_Odom_frame_from_predicted_trajectory , 
+        # this is  the actual reference for the NMPC
     
         # x0 and Xref are in odom frame
         # U control signals are in FLU frame, the U must be converted to odom (ENU) frame
@@ -660,7 +664,7 @@ class Controller_for_UAV_Node(Node):
 
         for it in range(iters):
             grad = np.zeros_like(U)
-
+            #Generating the control signals over the control horizon 
             # Efficient forward-difference gradient: perturb one control element at a time
             for i in range(self.N):
                 for j in range(4):
@@ -681,7 +685,7 @@ class Controller_for_UAV_Node(Node):
 
             # update U_prev and base cost for next iteration
             U_prev = U.copy()
-            cost_base = self._simulate_cost(x0, U, Xref)
+            cost_base = self._simulate_cost(x0, U_prev, Xref)
 
             # simple stopping
             if np.linalg.norm(grad) < 1e-2:
@@ -689,7 +693,27 @@ class Controller_for_UAV_Node(Node):
 
         # extract first command
         u0 = U[0,:]
-        vx_uav_flu, vy_uav_flu, vz_uav_flu, yawdot_uav_flu = float(u0[0]), float(u0[1]), float(u0[2]), float(u0[3])
+
+        # 1. Extract ENU velocities from your control input/state u0
+        vx_uav_ENU = u0[0]
+        vy_uav_ENU = u0[1]
+        vz_uav_ENU = u0[2]
+        yawrate_uav_ENU = u0[3]
+
+        # 2. Get the current orientation (this must be updated from your telemetry/state)
+        current_yaw = psi
+        
+        # 3. Perform the conversion to FLU (Front-Left-Up)
+        vx_uav_FLU = vx_uav_ENU * np.cos(current_yaw) + vy_uav_ENU * np.sin(current_yaw)
+        vy_uav_FLU = -vx_uav_ENU * np.sin(current_yaw) + vy_uav_ENU * np.cos(current_yaw)
+
+        # 4. Vertical velocity and Yaw Rate remain the same in both frames
+        vz_uav_FLU = vz_uav_ENU 
+        yawrate_uav_FLU = yawrate_uav_ENU
+
+        # Resulting vector for FLU-based control
+        u0_FLU = [vx_uav_FLU, vy_uav_FLU, vz_uav_FLU, yawrate_uav_FLU]
+        vx_uav_flu, vy_uav_flu, vz_uav_flu, yawdot_uav_flu = float(u0_FLU[0]), float(u0_FLU[1]), float(u0_FLU[2]), float(u0_FLU[3])
         # print(f"MPC Command: vx={vx_cmd:.3f}, vy={vy_cmd:.3f}, vz={vz_cmd:.3f}")
 
         # safety checks
@@ -710,7 +734,7 @@ class Controller_for_UAV_Node(Node):
         # self.e_pos=self.ugv_position_in_odom_frame-self.uav_position_in_odom_frame
         print(f"⭐⭐MPC Command⭐⭐: vx={vx_uav_flu:.3f}, vy={vy_uav_flu:.3f}, vz={vz_uav_flu:.3f}")
         
-        print(f"⭐⭐Tracking Error⭐⭐: ex={self.e_pos[0]:.3f}, ey={self.e_pos[1]:.3f}, ez={self.e_pos[2]:.3f}")
+        # print(f"⭐⭐Tracking Error⭐⭐: ex={self.e_pos[0]:.3f}, ey={self.e_pos[1]:.3f}, ez={self.e_pos[2]:.3f}")
         self.publish_cmd([vx_uav_flu, vy_uav_flu, vz_uav_flu], yawdot_uav_flu)
         
     
@@ -733,7 +757,7 @@ class Controller_for_UAV_Node(Node):
         for k in range(self.N):
             # 1. ERROR CALCULATION (Target - Current) in odom frame
             # self.e_pos = Xref[k, 0:3] - x_sim[0:3]
-            e_pos = Xref[k, 0:3] - x_sim[0:3]
+            e_pos = Xref[k, 0:3] - x_sim[0:3] #this is in ENU frame
             
             # print("e_pos=",self.e_pos)
             # total += self.e_pos.T @ self.Q_pos @ self.e_pos
@@ -742,13 +766,21 @@ class Controller_for_UAV_Node(Node):
 
             # 2. GET CONTROL INPUTS (UAV Body Frame FLU)
             # These are the inputs for which i want to compute the cost
-            vx_uav_FLU = U[k, 0]
-            vy_uav_FLU = U[k, 1]
-            vz_uav_FLU = U[k, 2]
-            yawrate_uav_FLU = U[k, 3]
+            # vx_uav_FLU = U[k, 0]
+            # vy_uav_FLU = U[k, 1]
+            # vz_uav_FLU = U[k, 2]
+            # yawrate_uav_FLU = U[k, 3]
+
+            # 2. WE Assume thet the CoNTROL INPUTS ARE IN ENU FRAME
+
+            vx_uav_ENU = U[k, 0]
+            vy_uav_ENU = U[k, 1]
+            vz_uav_ENU = U[k, 2]
+            yawrate_uav_ENU = U[k, 3]
 
             # Control magnitude penalty
-            u_vec = np.array([vx_uav_FLU, vy_uav_FLU, vz_uav_FLU, yawrate_uav_FLU])
+            u_vec = np.array([vx_uav_ENU, vy_uav_ENU, vz_uav_ENU, yawrate_uav_ENU])
+            
             total += u_vec.T @ self.R_u @ u_vec
 
             # This adds damping.
@@ -760,10 +792,10 @@ class Controller_for_UAV_Node(Node):
             # 3. TRANSFORM COMMANDED Body Velocity to World Velocity
             # since my model and the error all are in ENU frame , I have to convert the 
             # the control signal which was in FLU to ENU frame 
-            yaw_uav_ENU = x_sim[5]
-            vx_uav_ENU = (vx_uav_FLU * np.cos(yaw_uav_ENU) - vy_uav_FLU * np.sin(yaw_uav_ENU))
-            vy_uav_ENU = (vx_uav_FLU * np.sin(yaw_uav_ENU) + vy_uav_FLU * np.cos(yaw_uav_ENU))
-            vz_uav_ENU = vz_uav_FLU # Assuming odom and body Z are aligned
+            # yaw_uav_ENU = x_sim[5]
+            # vx_uav_ENU = (vx_uav_FLU * np.cos(yaw_uav_ENU) - vy_uav_FLU * np.sin(yaw_uav_ENU))
+            # vy_uav_ENU = (vx_uav_FLU * np.sin(yaw_uav_ENU) + vy_uav_FLU * np.cos(yaw_uav_ENU))
+            # vz_uav_ENU = vz_uav_FLU # Assuming odom and body Z are aligned
 
 
 
@@ -781,7 +813,7 @@ class Controller_for_UAV_Node(Node):
             x_sim[0] += curr_v_world[0] * self.pred_dt
             x_sim[1] += curr_v_world[1] * self.pred_dt
             x_sim[2] += curr_v_world[2] * self.pred_dt
-            x_sim[5] += yawrate_uav_FLU * self.pred_dt
+            x_sim[5] += yawrate_uav_ENU * self.pred_dt
             
             #This forces drone to slow near target.
             # Without velocity penalty, it will always overshoot.
@@ -790,7 +822,7 @@ class Controller_for_UAV_Node(Node):
         # Terminal penalty
         # This forces MPC to STOP at final point instead of blasting through.
         # e_terminal = Xref[self.N-1] - x_sim[0:3]
-        e_terminal = Xref[self.N-1, 0:3] - x_sim[0:3]
+        e_terminal = Xref[self.N-1, 0:3] - x_sim[0:3]  #in ENU frame
         total += 20.0 * (e_terminal.T @ self.Q_pos @ e_terminal)
 
         return total
