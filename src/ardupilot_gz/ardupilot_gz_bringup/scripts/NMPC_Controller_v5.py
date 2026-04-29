@@ -268,7 +268,7 @@ class Controller_for_UAV_Node(Node):
         self.cmd_pub = self.create_publisher(TwistStamped, '/mpc/cmd_vel', 10)
         self.error_pub = self.create_publisher(PointStamped, '/mpc/tracking_error', 10)
 
-
+        
         # Timer Switcher
         self.create_timer(self.mpc_dt, self.control_loop)
         
@@ -507,8 +507,8 @@ class Controller_for_UAV_Node(Node):
         # =====================================================
 
         # Normalize error (tune these thresholds)
-        e_scale = 3.0       # meters where error considered "large"
-        de_scale = 2.0      # m/s rate considered "fast"
+        e_scale = 5.0       # meters where error considered "large"
+        de_scale = 3.0      # m/s rate considered "fast"
 
         e_ratio = np.clip(e_pos_norm / e_scale, 0.0, 1.5)
         de_ratio = np.clip(de_norm / de_scale, 0.0, 1.5)
@@ -516,13 +516,22 @@ class Controller_for_UAV_Node(Node):
         # --- Fuzzy Rules (smooth nonlinear functions) ---
 
         # Large error → high Kp
-        kp_scale = 1.0 + 1.5 * e_ratio
+        #kp_scale = 0.02 + 0.3 * e_ratio
+        #kp_scale = 0.03 + 0.3 * (1 - e_ratio) # combination 1
+        kp_scale = 0.2 + 0.3 * (1-e_ratio) # combination 2
+        alpha = 0.5
+        #kp_scale = alpha*kp_scale + (1-alpha)*kp_scale# smoothing with original gain, alpha is the smoothing factor between 0 and 1
 
         # Small error → increase Ki
-        ki_scale = 1.0 + 1.0 * (1.0 - e_ratio)
-
+        #ki_scale = 0.07 + 1.0 * (1.0 - e_ratio); combination 1
+        ki_scale = 0.07 + 1.0 * (1.0 - e_ratio); #combination 2
         # High derivative → increase Kd
-        kd_scale = 1.0 + 2.0 * de_ratio
+        #kd_scale = 2.5 + 1.0 * de_ratio #combination1
+        kd_scale = 2.5 + 1.0 * de_ratio# combination 2
+        #Kd_scale = 3.0+1.0 * de_ratio
+        #kd_scale = 3.5 + 1.0 *de_ratio
+        #kd_scale = 4.5+1.0*de_ratio
+
 
         # Apply scaling
         kp_adapt = self.kp * kp_scale
