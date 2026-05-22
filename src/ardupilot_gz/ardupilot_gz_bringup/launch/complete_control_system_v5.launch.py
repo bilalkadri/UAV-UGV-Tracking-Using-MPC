@@ -65,7 +65,14 @@ def generate_launch_description():
         output='screen'
     )
     
+    
 
+    ekf_trajectory_estimator_launch_test = Node(
+        package='ardupilot_gz_bringup',
+        executable='Traj_Pred_EKF_Pub_v11.py',
+        parameters=[{'use_sim_time': use_sim_time}], # Linked to LaunchConfiguration
+        output='screen'
+    )
     
     #Data_Plot= Node(
         #package='ardupilot_gz_bringup',
@@ -153,12 +160,13 @@ def generate_launch_description():
         iris_mission,# this is launching the UAV 
         #uav_vel_estimator_launch, # MBK is not using this node
         ekf_trajectory_estimator_launch, # Estimating the position of the UGV using Odometry and then EKF (Aruco Marker)
+        ekf_trajectory_estimator_launch_test,
         nmpc_controller_launch,   # THis is the main NMPC ROS-2 node
         #Data_Plot,
         Rect_Path, # this node moves the UGV in rectangular path
         camera_optical_tf,
         aruco_detection_launch,  # THis node is detetcting the ARUCO marker and then generating it's pose
-        rosbag_record,
+        rosbag_record, # This is recording the rosbag with simulation time (use_sim_time) and all topics (-a)
         plotting_for_jp_launch
     ])
 

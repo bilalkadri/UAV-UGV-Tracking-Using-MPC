@@ -222,6 +222,7 @@ class Controller_for_UAV_Node(Node):
 
         self.ugv_position_in_odom_frame =  [0.0, 2.0, 0.0]   # Store UGV position by transforming data from /jacakal/base_link to /odom frame 
         self.ugv_yaw_in_odom_frame=0.0
+        self.ugv_absolute_pose_in_odom_frame_EKF_estimation = np.array([0.0, 2.0, 0.0, 0.0, 0.0, 0.0])
 
         self.ugv_lin_vel_in_jackal_odom_frame = np.zeros(3)      # UGV velocity (jacakl/odom frame),
         self.ugv_ang_vel_in_jackal_odom_frame = np.zeros(3)  # UGV angular velocity (jackal/odom frame), 
@@ -255,13 +256,14 @@ class Controller_for_UAV_Node(Node):
         )
         
         # Subscribers
-        self.create_subscription(PoseStamped, '/relative_pose_odom_OR_ekf', self.rel_pose_cb, 10)
+        self.create_subscription(PoseStamped, '/relative_pose_odom_OR_ekf', self.rel_pose_odom_OR_ekf_cb, 10)
         self.create_subscription(Odometry, '/jackal/jackal_velocity_controller/odom', self.ugv_pose_cb, 10)
         self.create_subscription(Path, '/predicted_trajectory', self.predicted_trajectory_cb, 10)
         self.create_subscription(PoseStamped, '/ap/pose/filtered', self.uav_pose_cb, qos_profile)
         self.create_subscription(TwistStamped, '/ap/twist/filtered', self.uav_twist_cb, qos_profile)
         self.create_subscription(String,'/tracking_mode',self.mode_status_cb,10)
-
+        self.create_subscription(PoseStamped,'/absolute_pose_odometry_OR_ekf',self.absolute_pose_odom_OR_ekf_cb,10) # subscribing to the absolute pose measurement from EKF node (Aruco + Odometry)
+        # self.pub_absolute_pose_blended_odometry_OR_ekf = self.create_publisher(PoseStamped, '/absolute_pose_odometry_OR_ekf', 10) # publishing in  odom frame
 
         # Publishers
         self.Xref_pred_pub = self.create_publisher(Path, '/Xref_MPC_in_Odom_frame_from_predicted_trajectory', 10)
@@ -483,8 +485,12 @@ class Controller_for_UAV_Node(Node):
     def run_fuzzy_pid_logic(self):
 
         # --- Position Error ---
-        dx, dy, dz = self.ugv_position_in_odom_frame - self.uav_position_in_odom_frame
+        # dx, dy, dz = self.ugv_position_in_odom_frame - self.uav_position_in_odom_frame
+        dx, dy, dz = self.ugv_absolute_pose_in_odom_frame_EKF_estimation[:3] - self.uav_position_in_odom_frame
+        
         dyaw = self.ugv_yaw_in_odom_frame - self.uav_yaw_in_odom_frame
+        # Wrap dyaw to [-pi, pi] to avoid discontinuous control jumps
+        dyaw = ((dyaw + np.pi) % (2 * np.pi)) - np.pi
 
         current_error = np.array([dx, dy, dz - 2.0, dyaw])
 
@@ -492,15 +498,29 @@ class Controller_for_UAV_Node(Node):
         e_pos_norm = np.linalg.norm(current_error[:3])
         e_yaw_abs = abs(dyaw)
 
-        # --- Integral ---
+       
+        # --- Integral with anti-windup constraint ---
         self.error_integral += current_error * self.mpc_dt
         self.error_integral = np.clip(self.error_integral, -1.0, 1.0)
 
-        # --- Derivative ---
-        error_derivative = (current_error - self.prev_error) / self.mpc_dt
+        # --- Derivative calculation with First-Order Low-Pass Filter ---
+        raw_derivative = (current_error - self.prev_error) / self.mpc_dt
         self.prev_error = current_error
 
-        de_norm = np.linalg.norm(error_derivative[:3])
+        # Low-pass filter coefficient (alpha_lpf between 0 and 1)
+        # Lower values = smoother but introduces slight delay. 0.2-0.3 is optimal for 10-50Hz loops.
+        if not hasattr(self, 'filtered_derivative'):
+            self.filtered_derivative = np.zeros(4)
+        
+        alpha_lpf = 0.25 
+        self.filtered_derivative = alpha_lpf * raw_derivative + (1.0 - alpha_lpf) * self.filtered_derivative
+        de_norm = np.linalg.norm(self.filtered_derivative[:3])
+
+        # # --- Derivative without Low Pass Filter ---
+        # error_derivative = (current_error - self.prev_error) / self.mpc_dt
+        # self.prev_error = current_error
+
+        # de_norm = np.linalg.norm(error_derivative[:3])
 
         # =====================================================
         # FUZZY GAIN SCALING
@@ -521,16 +541,22 @@ class Controller_for_UAV_Node(Node):
         kp_scale = 0.2 + 0.3 * (1-e_ratio) # combination 2
         alpha = 0.5
         #kp_scale = alpha*kp_scale + (1-alpha)*kp_scale# smoothing with original gain, alpha is the smoothing factor between 0 and 1
+        # 1. Kp Scale: Small error -> lower gain (smooth); Large error -> higher gain (aggressive tracking)
+        # This keeps the drone aggressive when far away, but soft and quiet when hovering on target.
+        # kp_scale = 0.4 + 0.6 * e_ratio  # Ranges from 0.4 (close) to 1.0 (far away)
+
+
+
 
         # Small error → increase Ki
         #ki_scale = 0.07 + 1.0 * (1.0 - e_ratio); combination 1
         ki_scale = 0.07 + 1.0 * (1.0 - e_ratio); #combination 2
+
+
         # High derivative → increase Kd
         #kd_scale = 2.5 + 1.0 * de_ratio #combination1
         kd_scale = 2.5 + 1.0 * de_ratio# combination 2
-        #Kd_scale = 3.0+1.0 * de_ratio
-        #kd_scale = 3.5 + 1.0 *de_ratio
-        #kd_scale = 4.5+1.0*de_ratio
+
 
 
         # Apply scaling
@@ -542,10 +568,16 @@ class Controller_for_UAV_Node(Node):
         # PID Output
         # =====================================================
 
+        # output = (
+        #     kp_adapt * current_error
+        #     + ki_adapt * self.error_integral
+        #     + kd_adapt * error_derivative
+        # )
+
         output = (
             kp_adapt * current_error
             + ki_adapt * self.error_integral
-            + kd_adapt * error_derivative
+            + kd_adapt * self.filtered_derivative  # Uses the filtered derivative signal
         )
 
         vx_enu, vy_enu, vz_enu, wz_enu = output
@@ -934,11 +966,22 @@ class Controller_for_UAV_Node(Node):
 
 
     # --- (Include all other helper functions like rel_pose_cb, quat_to_rpy, etc here) ---
-    def rel_pose_cb(self, msg: PoseStamped):
+    def rel_pose_odom_OR_ekf_cb(self, msg: PoseStamped):
         x, y, z = msg.pose.position.x, msg.pose.position.y, msg.pose.position.z
         roll, pitch, yaw = self.quat_to_rpy_msg(msg.pose.orientation)
         self.ugv_pos_and_orient_in_UAV_frame = np.array([x, y, z, roll, pitch, yaw], dtype=float)
         self.have_rel = True
+    
+    def absolute_pose_odom_OR_ekf_cb(self, msg: PoseStamped):
+        # This callback is getting UGV position from EKF and is most critical for the control logic
+        # It gives the absolute pose of the UGV in the odom frame (world coordinates)
+        # This is the belnded ROS topic ('/absolute_pose_odometry_OR_ekf'), 
+        # data from odometery and EKF are blenede in this ROS topic
+        
+        x, y, z = msg.pose.position.x, msg.pose.position.y, msg.pose.position.z
+        roll, pitch, yaw = self.quat_to_rpy_msg(msg.pose.orientation)
+        self.ugv_absolute_pose_in_odom_frame_EKF_estimation = np.array([x, y, z, roll, pitch, yaw], dtype=float)
+
 
     def publish_cmd(self, v_xyz, yawdot):
         msg = TwistStamped()

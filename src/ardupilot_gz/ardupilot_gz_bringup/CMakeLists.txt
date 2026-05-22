@@ -40,6 +40,7 @@ install(PROGRAMS
   
   scripts/twist_stamped_republisher.py
   scripts/Traj_Pred_Using_Sensor_Data.py
+  scripts/Traj_Pred_EKF_Pub_v11.py
   scripts/NMPC_Controller_v5.py
   scripts/Aruco_Detection_Node_v6.py
   scripts/Moving_the_UGV.py
