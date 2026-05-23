@@ -256,7 +256,7 @@ class Controller_for_UAV_Node(Node):
         )
         
         # Subscribers
-        self.create_subscription(PoseStamped, '/relative_pose_odom_OR_ekf', self.rel_pose_odom_OR_ekf_cb, 10)
+        # self.create_subscription(PoseStamped, '/relative_pose_odom_OR_ekf', self.rel_pose_odom_OR_ekf_cb, 10)
         self.create_subscription(Odometry, '/jackal/jackal_velocity_controller/odom', self.ugv_pose_cb, 10)
         self.create_subscription(Path, '/predicted_trajectory', self.predicted_trajectory_cb, 10)
         self.create_subscription(PoseStamped, '/ap/pose/filtered', self.uav_pose_cb, qos_profile)
@@ -393,7 +393,7 @@ class Controller_for_UAV_Node(Node):
             # REmember: jackal/odom is the initial positon of the jackal in the simulation world
             # jackal/base_link is fixed on top of the UGV. SO when UGV moves jackal/base_link moves as well
 
-            print("I am in get_ugv_world_position")
+            # print("I am in get_ugv_world_position")
             # 1. Get UGV position relative to its own start (jackal/base_link -> jackal/odom)
             t1 = self.tf_buffer.lookup_transform('jackal/odom', 'jackal/base_link', rclpy.time.Time())
             # print("t1",t1)
@@ -966,11 +966,11 @@ class Controller_for_UAV_Node(Node):
 
 
     # --- (Include all other helper functions like rel_pose_cb, quat_to_rpy, etc here) ---
-    def rel_pose_odom_OR_ekf_cb(self, msg: PoseStamped):
-        x, y, z = msg.pose.position.x, msg.pose.position.y, msg.pose.position.z
-        roll, pitch, yaw = self.quat_to_rpy_msg(msg.pose.orientation)
-        self.ugv_pos_and_orient_in_UAV_frame = np.array([x, y, z, roll, pitch, yaw], dtype=float)
-        self.have_rel = True
+    # def rel_pose_odom_OR_ekf_cb(self, msg: PoseStamped):
+    #     x, y, z = msg.pose.position.x, msg.pose.position.y, msg.pose.position.z
+    #     roll, pitch, yaw = self.quat_to_rpy_msg(msg.pose.orientation)
+    #     self.ugv_pos_and_orient_in_UAV_frame = np.array([x, y, z, roll, pitch, yaw], dtype=float)
+    #     self.have_rel = True
     
     def absolute_pose_odom_OR_ekf_cb(self, msg: PoseStamped):
         # This callback is getting UGV position from EKF and is most critical for the control logic
@@ -981,7 +981,7 @@ class Controller_for_UAV_Node(Node):
         x, y, z = msg.pose.position.x, msg.pose.position.y, msg.pose.position.z
         roll, pitch, yaw = self.quat_to_rpy_msg(msg.pose.orientation)
         self.ugv_absolute_pose_in_odom_frame_EKF_estimation = np.array([x, y, z, roll, pitch, yaw], dtype=float)
-
+        self.have_rel = True
 
     def publish_cmd(self, v_xyz, yawdot):
         msg = TwistStamped()

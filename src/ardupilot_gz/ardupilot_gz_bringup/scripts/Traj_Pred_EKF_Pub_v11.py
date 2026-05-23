@@ -176,7 +176,7 @@ class AbsolutePoseEKF(Node):
         self.create_subscription(Odometry, '/jackal/jackal_velocity_controller/odom', self.ugv_pose_cb, 10) # in jackal/odom frame
         self.create_subscription(Bool, '/aruco/detected', self.aruco_detected_cb, 10)
         self.create_subscription(PoseStamped, '/aruco/pose', self.aruco_pose_cb, 10)
-        self.create_subscription(TwistStamped,'/mpc/cmd_vel',self.mpc_cmd_vel_cb,10)
+        self.create_subscription(TwistStamped,'/mpc/cmd_vel',self.control_signal_cmd_vel_cb,10)
         
         # UAV Position subscriber
         qos_profile = QoSProfile(
@@ -191,15 +191,12 @@ class AbsolutePoseEKF(Node):
         #----------------------------------------------------------------------------------------
         #                                              Publishers
         #----------------------------------------------------------------------------------------
-        #Self.pub_rel = self.create_publisher(PoseStamped, '/relative_pose_odom_OR_ekf', 10) # publishing in base_link frame
+    #    /absolute_pose_odometry_OR_ekf
+
         self.pub_absolute_pose_blended_odometry_OR_ekf = self.create_publisher(PoseStamped, '/absolute_pose_odometry_OR_ekf', 10) # publishing in  odom frame
-        #self.pub_rel_only_odom = self.create_publisher(PoseStamped, '/relative_pose_odom', 10) # publishing in base_link frame
+        
         self.pub_absolute_only_odometry = self.create_publisher(PoseStamped, '/absolute_pose_odometry', 10) # publishing in  odom frame
 
-        # Publisher for odometry-based relative pose
-        #self.odom_rel_pub = self.create_publisher(PoseStamped, '/relative_pose_odom', 10)
-
-        #self.pub_rel_only_ekf = self.create_publisher(PoseStamped, '/relative_pose_ekf', 10) # publishing in base_link frame
         self.pub_absolute_only_ekf = self.create_publisher(PoseStamped, '/absolute_pose_ekf', 10) # publishing in  odom frame
 
         self.pred_pub = self.create_publisher(Path, '/predicted_trajectory', 10)
@@ -219,10 +216,9 @@ class AbsolutePoseEKF(Node):
         #-------------------------------------Timer Functions-------------------------------------
         #----------------------------------------------------------------------------------------
         # Less frequent but more detailed
-        # self.create_timer(1.0, self.debug_all_frames_comprehensive)  # Every 1 seconds
-        # self.create_timer(0.5, self.print_frame_summary)  # Every 0.5 seconds
+
         self.create_timer(self.dt, self._timer_wrapper)
-        self.get_logger().info("RelativePoseEKF node started.")
+        self.get_logger().info("AbsolutePoseEKF node started.")
 
     def publish_mode_status(self):
         """Publish current tracking mode"""
@@ -251,7 +247,7 @@ class AbsolutePoseEKF(Node):
             # REmember: jackal/odom is the initial positon of the jackal in the simulation world
             # jackal/base_link is fixed on top of the UGV. SO when UGV moves jackal/base_link moves as well
 
-            print("I am in get_ugv_world_position")
+            # print("I am in get_ugv_world_position")
             # 1. Get UGV position relative to its own start (jackal/base_link -> jackal/odom)
             t1 = self.tf_buffer.lookup_transform('jackal/odom', 'jackal/base_link', rclpy.time.Time())
             # print("t1",t1)
@@ -322,7 +318,7 @@ class AbsolutePoseEKF(Node):
         except Exception:
             self.get_logger().error("❌❌❌❌❌Exception in uav_pose_cb:❌❌❌❌❌\n" + traceback.format_exc())
    
-    def mpc_cmd_vel_cb(self,msg):
+    def control_signal_cmd_vel_cb(self,msg):
         try:
             self.vx_mpc=msg.twist.linear.x
             self.vy_mpc=msg.twist.linear.y
@@ -412,7 +408,7 @@ class AbsolutePoseEKF(Node):
             
             if not self.ekf_active:
                 # ArUco detected - switch to EKF mode
-                print("[MODE] ArUco detected - switching to EKF mode")
+                # print("[MODE] ArUco detected - switching to EKF mode")
                 self.ekf_active = True
                 self.initialize_ekf_from_odometry()
         else:
@@ -422,7 +418,7 @@ class AbsolutePoseEKF(Node):
             if self.aruco_lost_count > self.aruco_lost_threshold:
                 if self.ekf_active:
                     # Lost ArUco for too long - switch to odometry mode
-                    print("[MODE] ArUco lost - switching to odometry mode")
+                    # print("[MODE] ArUco lost - switching to odometry mode")
                     self.ekf_active = False
         
         # Existing code
@@ -454,11 +450,7 @@ class AbsolutePoseEKF(Node):
             # is publishing the UAV's position in the World/Local frame i.e. /odom in this case.
             print(f"[MODE] UAV pos: {self.uav_position_in_odom_frame}, UGV pos: {self.ugv_position_in_odom_frame}")
             
-            # Calculate relative position in world frame
-            # self.ugv_position_in_odom_frame , Store UGV position from /odometry,/odometry is in world frame i.e. /odom
-            # self.uav_position_in_odom_frame is in world (odom) frame, Despite the frame_id saying base_link, the /ap/pose/filtered topic 
-            # is publishing the UAV's position in the World/Local frame i.e. /odom in this case.
-            
+                      
             rel_pos_world = self.ugv_position_in_odom_frame - self.uav_position_in_odom_frame
             # Yes, rel_pos_world is the relative position vector of the UGV with respect to the UAV, expressed in the World (Odom) frame.
             print(f"[MODE] Relative world: {rel_pos_world}")
@@ -500,12 +492,12 @@ class AbsolutePoseEKF(Node):
         if (math.isnan(msg.pose.position.x) or 
             math.isnan(msg.pose.position.y) or 
             math.isnan(msg.pose.position.z)):
-            print("[EKF] Received NaN measurement - marker lost")
+            # print("[EKF] Received NaN measurement - marker lost")
             self.aruco_pose_measurement = None  # Clear measurement
         else:
             # Valid measurement
             self.aruco_pose_measurement = msg
-            print(f"[EKF] Received valid ArUco measurement: x={msg.pose.position.x:.3f}")
+            # print(f"[EKF] Received valid ArUco measurement: x={msg.pose.position.x:.3f}")
 
     # Main EKF procedure
     def mode_switching_logic(self):
@@ -526,7 +518,7 @@ class AbsolutePoseEKF(Node):
 
     def run_odometry_mode(self):
         # """Run odometry-based tracking"""
-        print("[ODOM] Running odometry mode")
+        # print("[ODOM] Running odometry mode")
         # I will just update the /absolute_pose_odometry topic with the UGV's world position (not relative to UAV) for visualization
         # This will show the UGV's position in the world (odom) frame
         #  self.pub_absolute_only_odometry = self.create_publisher(PoseStamped, '/absolute_pose_odometry', 10) # publishing in  odom frame
@@ -591,17 +583,10 @@ class AbsolutePoseEKF(Node):
         self.dt
         )
             
-   
-    def run_ekf_mode_v2(self):
-        # """Run EKF-based tracking"""
-        print("[EKF] Running Modified EKF mode")
-
-        pass
-
-
+ 
     def run_ekf_mode(self):
     # """All your existing EKF code goes here"""
-        print("[EKF] Running EKF mode")
+        # print("[EKF] Running EKF mode")
         # ============= ⭐⭐ CRITICAL FIX: Prediction Step ⭐⭐ =============
         # Your EKF state is in UAV body frame, so we need to handle it properly
         
@@ -617,25 +602,7 @@ class AbsolutePoseEKF(Node):
         # rel_omega = self.omega_g - self.omega_u
 
         # Transform relative velocity from world frame to UAV body frame
-        # R_uav = np.array([
-        #     [np.cos(self.uav_yaw), -np.sin(self.uav_yaw), 0],
-        #     [np.sin(self.uav_yaw), np.cos(self.uav_yaw), 0],
-        #     [0, 0, 1]
-        # ])
-        
-        # rel_vel_body = R_uav.T @ rel_vel.reshape(3, 1)
 
-        # # Update state (all in UAV body frame)
-        # self.x[0:3, 0] += rel_vel_body.flatten() * self.dt
-        # self.x[3:6, 0] += rel_omega * self.dt
-        
-        # # Wrap angles to [-pi, pi]
-        # for i in range(3, 6):
-        #     self.x[i, 0] = ((self.x[i, 0] + np.pi) % (2*np.pi)) - np.pi
-        #-----------------------------------------------------------------------------
-        #------------------------ABove this line is the old code-------------------
-        #---------------Below is the new code---------------------------------
-        # --- Prediction step ---
         # 
 
         # ============= ⭐⭐ ISSUE 1: Missing adaptive Q matrix ⭐⭐ =============
@@ -816,13 +783,13 @@ class AbsolutePoseEKF(Node):
         if (self.aruco_detected and  self.aruco_pose_measurement is not None and
              not math.isnan(self.aruco_pose_measurement.pose.position.x)):
             try:
-                print(f"[EKF UPDATE] Starting update - detection=True, measurement valid")
+                # print(f"[EKF UPDATE] Starting update - detection=True, measurement valid")
                 # Extract orientation quaternion from ArUco measurement
                 q = self.aruco_pose_measurement.pose.orientation
                 # Convert quaternion to Euler angles (roll, pitch, yaw)
                 meas_roll, meas_pitch, meas_yaw = self.quat_to_rpy(q)
 
-                # In your ArucoDetector node, you are already using tf2_ros to automatically look up the
+                # In my ArucoDetector node, I already using tf2_ros to automatically look up the
                 # full 3D transform tree 
                 # from camera_optical_frame through the gimbal joints all the way to the UAV's base_link:
                 # This means the topic /aruco/pose is already published in the 
@@ -977,11 +944,7 @@ class AbsolutePoseEKF(Node):
         
 
 
-        # Publish to the same topic NMPC uses
-        #  self.pub_rel = self.create_publisher(PoseStamped, '/relative_pose_odom_OR_ekf', 10)
-        #self.pub_rel.publish(msg)   # publishing on the topic  /relative_pose_odom_OR_ekf in /base_link frame
-        # self.pub_rel_only_ekf.publish(msg) # publishing on the topic  /relative_pose_ekf in /base_link frame
-        
+       
         # self.pub_absolute_only_ekf = self.create_publisher(PoseStamped, '/absolute_pose_ekf', 10) # publishing in  odom frame
         self.pub_absolute_only_ekf.publish(msg) # publish on the topic /absolute_pose_ekf in /odom frame, this will be used for visualization and comparison with odometry-based absolute pose
 
@@ -1485,314 +1448,8 @@ class AbsolutePoseEKF(Node):
         return [q_x, q_y, q_z, q_w]
 
 
-    def print_trajectory_debug(self, label, frame_id):
-        """Print detailed trajectory debug info"""
-        if self.trajectory is None or len(self.trajectory) == 0:
-            print(f"[DEBUG] {label}: No trajectory generated")
-            return
-        
-        print(f"\n=== {label} TRAJECTORY DEBUG ===")
-        print(f"Frame: {frame_id}")
-        print(f"Number of points: {len(self.trajectory)}")
-        print(f"First point: {self.trajectory[0]}")
-        print(f"Last point: {self.trajectory[-1]}")
-        
-        # Calculate bounds
-        trajectory_np = np.array(self.trajectory)
-        min_vals = np.min(trajectory_np, axis=0)
-        max_vals = np.max(trajectory_np, axis=0)
-        print(f"Bounds - X: [{min_vals[0]:.2f}, {max_vals[0]:.2f}]")
-        print(f"         Y: [{min_vals[1]:.2f}, {max_vals[1]:.2f}]")
-        print(f"         Z: [{min_vals[2]:.2f}, {max_vals[2]:.2f}]")
-        
-        # Check for NaNs or zeros
-        if np.any(np.isnan(trajectory_np)):
-            print(f"WARNING: Trajectory contains NaN values!")
-        
-        if np.all(np.abs(trajectory_np) < 1e-6):
-            print(f"WARNING: All trajectory points are near zero!")
-        
-        print(f"=== END {label} DEBUG ===\n")
-
-    def print_frame_summary(self):
-        """Quick summary of the main problem"""
-        print("\n[QUICK DIAGNOSIS]")
-
-        # Calculate ugv_pos_world if it doesn't exist
-        ugv_pos_world = None
-        uav_pos_world = None
-        
-        # Get UAV world position
-        if hasattr(self, 'uav_pose_world'):
-            uav_pos_world = self.uav_pose_world
-        elif hasattr(self, 'uav_pos'):
-            uav_pos_world = self.uav_position_in_odom_frame
-        
-        # Calculate UGV world position
-        if hasattr(self, 'x') and uav_pos_world is not None and hasattr(self, 'uav_yaw'):
-            # Get relative position from EKF/odometry
-            ugv_pos_body = self.ugv_pos_and_orient_in_UAV_frame[0:3, 0]  # UGV in UAV body frame
-            
-            # Create rotation matrix
-            R_uav = np.array([
-                [np.cos(self.uav_yaw_in_odom_frame), -np.sin(self.uav_yaw_in_odom_frame), 0],
-                [np.sin(self.uav_yaw_in_odom_frame), np.cos(self.uav_yaw_in_odom_frame), 0],
-                [0, 0, 1]
-            ])
-            
-            # Transform to world frame: ugv_world = uav_world + R_uav @ ugv_body
-            ugv_pos_world = uav_pos_world + R_uav @ ugv_pos_body
-            
-            print(f"\nWorld Position:")
-            print(f"  UAV world: {uav_pos_world}")
-            print(f"  UGV body (relCalculated UGV ative): {ugv_pos_body}")
-            print(f"  UGV world: {ugv_pos_world}")
-        
-        # Get key data
-        if ugv_pos_world is not None and uav_pos_world is not None:
-            uav_to_ugv = ugv_pos_world - uav_pos_world
-            distance = np.linalg.norm(uav_to_ugv[:2])
-             # Direction
-            bearing_to_ugv = np.degrees(np.arctan2(uav_to_ugv[1], uav_to_ugv[0]))
-            yaw_error = bearing_to_ugv - np.degrees(self.uav_yaw_in_odom_frame)
-            
-            # Normalize yaw error to [-180, 180]
-            yaw_error = (yaw_error + 180) % 360 - 180
-
-            print(f"Distance to UGV: {distance:.2f}m")
-            print(f"UAV yaw: {np.degrees(self.uav_yaw_in_odom_frame):.1f}°")
-            print(f"Bearing to UGV: {bearing_to_ugv:.1f}°")
-            print(f"Yaw error: {yaw_error:.1f}°")
-
-                    
-            if abs(yaw_error) > 90:
-                print("🚨 MAJOR ISSUE: UAV pointing away from UGV!")
-                print("   Fix yaw first before position tracking.")
-            elif distance > 10:
-                print("⚠️  UAV far from UGV")
-            else:
-                print("✅ Reasonable starting point")
-
-            
-        else:
-        # Optional: Print a warning so you know which one is missing
-            self.get_logger().warn("Waiting for TF data: UGV or UAV position is None")
-           
-    def debug_all_frames_comprehensive(self):
-        """
-        COMPREHENSIVE DEBUG: Shows ALL coordinate frames and transformations
-        Run this function and paste the output here
-        """
-        print("\n" + "="*80)
-        print("COMPREHENSIVE COORDINATE FRAME DEBUG")
-        print("="*80)
-        
-        # ========== 1. RAW DATA FROM SENSORS ==========
-        print("\n1. RAW SENSOR DATA:")
-        print("-" * 40)
-        
-        # UAV Data
-        print(f"UAV Pose (from /ap/pose/filtered):")
-        if hasattr(self, 'uav_pose_world'):
-            print(f"  Position: {self.uav_pose_world}")
-        elif hasattr(self, 'uav_pos'):
-            print(f"  Position: {self.uav_position_in_odom_frame}")
-        else:
-            print("  ⚠️  Not available")
-        
-        # Calculate ugv_pos_world if it doesn't exist
-        ugv_pos_world = None
-        uav_pos_world = None
-        
-        # Get UAV world position
-        if hasattr(self, 'uav_pose_world'):
-            uav_pos_world = self.uav_pose_world
-        elif hasattr(self, 'uav_pos'):
-            uav_pos_world = self.uav_position_in_odom_frame
-        
-        # Calculate UGV world position
-        if hasattr(self, 'x') and uav_pos_world is not None and hasattr(self, 'uav_yaw'):
-            # Get relative position from EKF/odometry
-            ugv_pos_body = self.ugv_pos_and_orient_in_UAV_frame[0:3, 0]  # UGV in UAV body frame
-            
-            # Create rotation matrix
-            R_uav = np.array([
-                [np.cos(self.uav_yaw_in_odom_frame), -np.sin(self.uav_yaw_in_odom_frame), 0],
-                [np.sin(self.uav_yaw_in_odom_frame), np.cos(self.uav_yaw_in_odom_frame), 0],
-                [0, 0, 1]
-            ])
-            
-            # Transform to world frame: ugv_world = uav_world + R_uav @ ugv_body
-            ugv_pos_world = uav_pos_world + R_uav @ ugv_pos_body
-            
-            print(f"\nCalculated UAV and UGV World Positions:")
-            print(f"  UAV world: {uav_pos_world}")
-            print(f"  UGV body (relative): {ugv_pos_body}")
-            print(f"  UGV world: {ugv_pos_world}") #this is wrong
-            # [Traj_Pred_EKF_Pub_v9.py-4]   UGV world: [-2.03572058  0.0931691   1.99000001] 
-    
-      
-      
-      
-        # ========== 2. RELATIVE POSITIONS (using calculated) ==========
-        print("\n2. RELATIVE POSITIONS:")
-        print("-" * 40)
-        
-        if uav_pos_world is not None and ugv_pos_world is not None:
-            # World frame relative
-            rel_world = ugv_pos_world-uav_pos_world 
-            print(f"UGV - UAV (world frame): {rel_world}")
-            print(f"  Distance: {np.linalg.norm(rel_world):.2f}m")
-            
-            # Direction from UAV to UGV
-            uav_to_ugv = ugv_pos_world - uav_pos_world
-            direction_deg = np.degrees(np.arctan2(uav_to_ugv[1], uav_to_ugv[0]))
-            print(f"\nDirection to UGV (world frame):")
-            print(f"  Vector: {uav_to_ugv}")
-            print(f"  Bearing: {direction_deg:.2f}°")
-            
-            # Transform to UAV body frame
-            R_world_to_body = R_uav.T  # Transpose for inverse
-            rel_body = R_world_to_body @ rel_world
-            print(f"\nRelative in UAV body frame:")
-            print(f"  Calculated: {rel_body}")
-            print(f"  From state vector (x): {self.ugv_pos_and_orient_in_UAV_frame[0:3, 0]}")
-            print(f"  Error: {rel_body - self.ugv_pos_and_orient_in_UAV_frame[0:3, 0].flatten()}")
-        
-        
-        # ========== 3. RELATIVE POSITIONS ==========
-        print("\n3. RELATIVE POSITIONS:")
-        print("-" * 40)
-        
-        if hasattr(self, 'uav_position_in_odom_frame') and hasattr(self, 'ugv_position_in_odom_frame'):
-            # World frame relative
-            if self.uav_position_in_odom_frame is None or self.ugv_position_in_odom_frame is None:
-                self.get_logger().warn("Waiting for TF data (UAV or UGV is None)... skipping this loop.")
-                return  # Exit the function early so we don't crash on the math below
-
-
-            rel_world = self.ugv_position_in_odom_frame-self.uav_position_in_odom_frame
-            print(f"UGV - UAV (world frame): {rel_world}")
-            print(f"  Distance: {np.linalg.norm(rel_world):.2f}m")
-            print(f"  Horizontal distance: {np.linalg.norm(rel_world[:2]):.2f}m")
-            
-            # Direction from UAV to UGV in world frame
-            uav_to_ugv_world = self.ugv_position_in_odom_frame-self.uav_position_in_odom_frame
-            direction_deg = np.degrees(np.arctan2(uav_to_ugv_world[1], uav_to_ugv_world[0]))
-            print(f"\nDirection from UAV to UGV (world frame):")
-            print(f"  Vector: {uav_to_ugv_world}")
-            print(f"  Bearing: {direction_deg:.2f}°")
-            print(f"  (0° = East, 90° = North, -90° = South, 180°/-180° = West)")
-            
-            # Transform to UAV body frame
-            if hasattr(self, 'uav_yaw'):
-                R_world_to_body = np.array([
-                    [np.cos(self.uav_yaw_in_odom_frame), np.sin(self.uav_yaw_in_odom_frame), 0],
-                    [-np.sin(self.uav_yaw_in_odom_frame), np.cos(self.uav_yaw_in_odom_frame), 0],
-                    [0, 0, 1]
-                ])
-                rel_body = R_world_to_body @ rel_world
-                print(f"\nUGV - UAV (UAV body frame): {rel_body}")
-                
-                # What does this mean?
-                print(f"\nINTERPRETATION (UAV body frame):")
-                print(f"  X: {rel_body[0]:.2f}m ({'Ahead' if rel_body[0] > 0 else 'Behind'})")
-                print(f"  Y: {rel_body[1]:.2f}m ({'Right' if rel_body[1] > 0 else 'Left'})")
-                print(f"  Z: {rel_body[2]:.2f}m ({'Above' if rel_body[2] > 0 else 'Below'})")
-        else:
-            print("⚠️  Cannot calculate relative positions")
-        
-        # ========== 4. VELOCITY ANALYSIS ==========
-        print("\n4. VELOCITY ANALYSIS:")
-        print("-" * 40)
-        
-        if hasattr(self, 'v_u') and hasattr(self, 'v_g'):
-            print(f"UAV velocity (body frame): {self.uav_lin_vel_wrt_odom_frame_expressed_in_base_link}")
-            print(f"UGV velocity (body frame): {self.ugv_lin_vel_wrt_jackal_odom_frame_expressed_in_jackal_base_link}")
-            
-            # Check if moving
-            uav_speed = np.linalg.norm(self.uav_lin_vel_wrt_odom_frame_expressed_in_base_link[:2])
-            ugv_speed = np.linalg.norm(self.ugv_lin_vel_wrt_jackal_odom_frame_expressed_in_jackal_base_link[:2])
-            print(f"\nSpeeds:")
-            print(f"  UAV: {uav_speed:.2f} m/s")
-            print(f"  UGV: {ugv_speed:.2f} m/s")
-            
-            if uav_speed < 0.1 and ugv_speed < 0.1:
-                print("  ⚠️  Both vehicles nearly stationary")
-        else:
-            print("⚠️  Velocity data not available")
-        
-        # ========== 5. STATE VECTOR ==========
-        print("\n5. EKF/ODOMETRY STATE VECTOR:")
-        print("-" * 40)
-        
-        if hasattr(self, 'x'):
-            print(f"State vector shape: {self.ugv_pos_and_orient_in_UAV_frame.shape}")
-            print(f"State values:")
-            print(f"  Position (x,y,z): {self.ugv_pos_and_orient_in_UAV_frame[0,0]:.2f}, {self.ugv_pos_and_orient_in_UAV_frame[1,0]:.2f}, {self.ugv_pos_and_orient_in_UAV_frame[2,0]:.2f}")
-            if self.ugv_pos_and_orient_in_UAV_frame.shape[0] > 3:
-                print(f"  Orientation (roll,pitch,yaw): {np.degrees(self.ugv_pos_and_orient_in_UAV_frame[3,0]):.2f}°, {np.degrees(self.ugv_pos_and_orient_in_UAV_frame[4,0]):.2f}°, {np.degrees(self.ugv_pos_and_orient_in_UAV_frame[5,0]):.2f}°")
-            
-            # Compare with calculated
-            if hasattr(self, 'uav_position_in_odom_frame') and hasattr(self, 'ugv_position_in_odom_frame') and hasattr(self, 'uav_yaw'):
-                calculated_rel_body = rel_body  # From section 3
-                state_rel = np.array([self.ugv_pos_and_orient_in_UAV_frame[0,0], self.ugv_pos_and_orient_in_UAV_frame[1,0], self.ugv_pos_and_orient_in_UAV_frame[2,0]])
-                error = calculated_rel_body - state_rel
-                print(f"\nComparison with calculated:")
-                print(f"  Calculated rel body: {calculated_rel_body}")
-                print(f"  State vector rel: {state_rel}")
-                print(f"  Error: {error}")
-                print(f"  Error norm: {np.linalg.norm(error):.2f}m")
-        else:
-            print("⚠️  State vector not available")
-        
-        # ========== 6. TRAJECTORY PREDICTION ==========
-        print("\n6. TRAJECTORY PREDICTION (if running):")
-        print("-" * 40)
-        
-        if hasattr(self, 'trajectory') and self.trajectory:
-            print(f"Predicted trajectory length: {len(self.trajectory)}")
-            print(f"First point: {self.trajectory[0]}")
-            print(f"Last point: {self.trajectory[-1]}")
-            
-            # Check if trajectory is reasonable
-            if len(self.trajectory) > 1:
-                first = self.trajectory[0]
-                last = self.trajectory[-1]
-                movement = last - first
-                print(f"\nTrajectory movement over horizon: {movement}")
-        else:
-            print("No trajectory predicted yet")
-        
-        # ========== 7. CONTROL COMMANDS ==========
-        print("\n7. CONTROL OUTPUT:")
-        print("-" * 40)
-        
-        if hasattr(self, 'vx_mpc') and hasattr(self, 'vy_mpc') and hasattr(self, 'vz_mpc') and hasattr(self,'yaw_dot_mpc'):
-            print(f"Last control command: vx: {self.vx_mpc:.3f}, vy: {self.vy_mpc:.3f}, vz: {self.vz_mpc:.3f}, yaw_dot: {self.yaw_dot_mpc:.3f} ")
-        else:
-            print("No complete MPC control commands sent (missing vx, vy, or vz)")
-        
-        
-        # ========== 8. FRAME CONVENTIONS SUMMARY ==========
-        print("\n8. FRAME CONVENTIONS (for reference):")
-        print("-" * 40)
-        print("Gazebo/World Frame: ENU (East-North-Up)")
-        print("  X: East, Y: North, Z: Up")
-        print("\nArduPilot Body Frame: NED (North-East-Down)")
-        print("  X: North, Y: East, Z: Down (NOTE: Different!)")
-        print("\nROS Standard: ENU (East-North-Up)")
-        print("  X: East, Y: North, Z: Up")
-        print("\nUAV Body Frame (in our code):")
-        print("  X: Forward, Y: Left, Z: Up (FLU)")
-        print("  Yaw: 0° = East, 90° = North, -90° = South")
-        
-        print("\n" + "="*80)
-        print("END DEBUG")
-        print("="*80)
-        
-        return True
-
+   
+  
 def main(args=None):
     rclpy.init(args=args)
     node = AbsolutePoseEKF()

@@ -104,12 +104,12 @@ def generate_launch_description():
     # ==========================
     #   DELAYED NMPC CONTROLLER
     # ==========================
-    nmpc_controller_launch = TimerAction(
+    controller_launch = TimerAction(
         period=1.0,  # delay in seconds
         actions=[
             Node(
                 package='ardupilot_gz_bringup',
-                executable='NMPC_Controller_v5.py',
+                executable='Controller_v5.py',
                 parameters=[{'use_sim_time': use_sim_time}], # Added param
                 output='screen'
             )
@@ -161,7 +161,7 @@ def generate_launch_description():
         #uav_vel_estimator_launch, # MBK is not using this node
         ekf_trajectory_estimator_launch, # Estimating the position of the UGV using Odometry and then EKF (Aruco Marker)
         ekf_trajectory_estimator_launch_test,
-        nmpc_controller_launch,   # THis is the main NMPC ROS-2 node
+        controller_launch,   # THis is the main controller ROS-2 node
         #Data_Plot,
         Rect_Path, # this node moves the UGV in rectangular path
         camera_optical_tf,

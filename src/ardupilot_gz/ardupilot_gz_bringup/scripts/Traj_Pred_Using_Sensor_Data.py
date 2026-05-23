@@ -32,7 +32,7 @@ class UGV_Pose_from_Sensor_Data(Node):
         
         # Variables to store UGV information 
 
-        self.ugv_position_in_odom_frame =  [0.0, 2.0, 0.0]   # Store UGV position by transforming data from /jacakal/base_link to /odom frame 
+        self.ugv_position_in_odom_frame_using_tf_transform =  [0.0, 2.0, 0.0]   # Store UGV position by transforming data from /jacakal/base_link to /odom frame 
         self.ugv_yaw_in_odom_frame=0.0
         self.ugv_roll_in_jackal_odom_frame =0.0
         self.ugv_pitch_in_jackal_odom_frame =0.0
@@ -64,9 +64,9 @@ class UGV_Pose_from_Sensor_Data(Node):
         #----------------------------------------------------------------------------------------
         #                                              Publishers
         #----------------------------------------------------------------------------------------
-        self.pub_rel = self.create_publisher(PoseStamped, '/relative_pose_odom_OR_ekf', 10) # publishing in base_link frame
+        # self.pub_rel = self.create_publisher(PoseStamped, '/relative_pose_odom_OR_ekf', 10) # publishing in base_link frame
         
-        self.pub_rel_only_odom = self.create_publisher(PoseStamped, '/relative_pose_odom', 10) # publishing in base_link frame
+        self.pub_ugv_odom_using_tf = self.create_publisher(PoseStamped, '/ugv_pose_odom_frame_using_tf', 10) # publishing in base_link frame
         
         self.pred_pub = self.create_publisher(Path, '/predicted_trajectory', 10)
 
@@ -167,7 +167,7 @@ class UGV_Pose_from_Sensor_Data(Node):
             # self.ugv_position_in_odom_frame=self.get_ugv_world_position()
             #  When the above function is called all the data will be automatically stored in class variables:
 
-            self.get_ugv_position_in_odom_frame()
+            self.get_ugv_position_in_odom_frame_using_tf_transform()
             self.publishing_the_data_on_ROS_topic()
           
             x0=[self.ugv_position_in_jackal_odom_frame[0],self.ugv_position_in_jackal_odom_frame[1],self.ugv_yaw_in_jackal_odom_frame]
@@ -193,9 +193,9 @@ class UGV_Pose_from_Sensor_Data(Node):
         msg.header.frame_id = 'odom'
         
         # Position
-        msg.pose.position.x = self.ugv_position_in_odom_frame[0]
-        msg.pose.position.y = self.ugv_position_in_odom_frame[1]
-        msg.pose.position.z = self.ugv_position_in_odom_frame[2]
+        msg.pose.position.x = self.ugv_position_in_odom_frame_using_tf_transform[0]
+        msg.pose.position.y = self.ugv_position_in_odom_frame_using_tf_transform[1]
+        msg.pose.position.z = self.ugv_position_in_odom_frame_using_tf_transform[2]
         
         # Orientation
         # Convert to quaternion, the orientation of the UGV w.r.t the odom frame 
@@ -206,12 +206,12 @@ class UGV_Pose_from_Sensor_Data(Node):
         msg.pose.orientation.w = qw
         
         # Publish to the same topic NMPC uses
-        #  self.pub_rel = self.create_publisher(PoseStamped, '/relative_pose_odom_OR_ekf', 10)
-        self.pub_rel.publish(msg)   # publishing on the topic  /relative_pose_odom_OR_ekf in /odom frame
-        self.pub_rel_only_odom.publish(msg) # publishing on the topic  /relative_pose_odom in /odom frame
+       
+       
+        self.pub_ugv_odom_using_tf.publish(msg) # publishing on the topic  /ugv_pose_odom_frame_using_tf in /odom frame
  
 
-    def get_ugv_position_in_odom_frame(self):
+    def get_ugv_position_in_odom_frame_using_tf_transform(self):
         """Get UGV position in world frame , remember world frame is odom, using TF"""
         try:
             
@@ -230,9 +230,9 @@ class UGV_Pose_from_Sensor_Data(Node):
             # 3. Combine them: World_Pos = Offset + (Rotation_of_Offset * Local_Pos)
             # We use geometry_msgs math or simple addition if rotations are aligned
 
-            self.ugv_position_in_odom_frame[0] = t2.transform.translation.x + t1.transform.translation.x
-            self.ugv_position_in_odom_frame[1]  = t2.transform.translation.y + t1.transform.translation.y
-            self.ugv_position_in_odom_frame[2]  = t2.transform.translation.z + t1.transform.translation.z
+            self.ugv_position_in_odom_frame_using_tf_transform[0] = t2.transform.translation.x + t1.transform.translation.x
+            self.ugv_position_in_odom_frame_using_tf_transform[1]  = t2.transform.translation.y + t1.transform.translation.y
+            self.ugv_position_in_odom_frame_using_tf_transform[2]  = t2.transform.translation.z + t1.transform.translation.z
     
 
             # --- ORIENTATION (Combined Yaw) ---
