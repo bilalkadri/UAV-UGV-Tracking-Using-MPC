@@ -25,8 +25,10 @@ class ArucoDetector(Node):
         self.tag_detected = False
         self.marker_center = None
         self.frame_center = None
+        self.last_valid_yaw = 0.0
+        self.is_yaw_initialized = False  # Caught first-frame offsets safely
 
-        #for transformation
+        # for transformation
         self.tf_buffer = tf2_ros.Buffer()
         self.tf_listener = tf2_ros.TransformListener(self.tf_buffer, self)
 
@@ -38,7 +40,6 @@ class ArucoDetector(Node):
             [0.0, 0.0, 1.0]
         ], dtype=float)
         self.dist_coeffs = np.zeros(5, dtype=float)
-
 
         # subscribers
         self.image_sub = self.create_subscription(
@@ -73,7 +74,6 @@ class ArucoDetector(Node):
         self.frame_center = (w / 2.0, h / 2.0)
 
         corners, ids, _ = self.detector.detectMarkers(frame)
-        print(ids)
 
         detected_msg = Bool()
         detected_msg.data = False
@@ -96,12 +96,6 @@ class ArucoDetector(Node):
             # publish marker center
             point_msg = PointStamped()
             point_msg.header.stamp = self.get_clock().now().to_msg()
-            # In ROS, frame_id refers to physical space (meters). 
-            # Pixel values should be published in a custom RegionOfInterest or Point2D message,
-            #  or just ignored if you only need the 3D pose. 
-            # Visualizing this in Foxglove will create a point 320 meters away from your drone.
-            # therefor point_msg.header.frame_id should not be set 
-            # point_msg.header.frame_id = "pitch_link" #this is the last link in the tf tree, the camera is connected to this link 
             point_msg.point.x = cx
             point_msg.point.y = cy
             point_msg.point.z = 0.0
@@ -112,64 +106,79 @@ class ArucoDetector(Node):
             rvec = rvecs[0][0]
             tvec = tvecs[0][0]
 
-
-
-            # Based on the model.sdf file provided, there is a slight misunderstanding 
-            # in your setup: the camera is not 
-            # directly attached to the roll_link. Instead, it is attached to the pitch_link.
-            # The gimbal follows a standard serial chain where each link is a child of the previous one:
-            # gimbal_link: The base plate attached to the UAV.
-            # yaw_link: Attached to the base plate via the yaw_joint.
-            # roll_link: Attached to the yaw_link via the roll_joint.
-            # pitch_link: Attached to the roll_link via the pitch_joint.
-            # Frame ID: Th
-            
-            #Static mapping from "camera_optical_frame"  to "pitch_link" has been defined in the
-            #launch file 
-            # ros2 launch ardupilot_gz_bringup complete_control_system_v5.launch.py 
-            # Define the static transform from pitch_link to camera_optical_frame
-            # # Args: x y z yaw pitch roll parent_frame child_frame
-            # camera_optical_tf = Node(
-            #     package='tf2_ros',
-            #     executable='static_transform_publisher',
-            #     name='camera_base_to_optical',
-            #     arguments=['0', '0', '0', '-1.5708', '0', '-1.5708', 'pitch_link', 'camera_optical_frame'],
-            #     parameters=[{'use_sim_time': use_sim_time}]
-            # )
-
             # 1. Create Pose in the Camera Optical Frame
-            # convert to PoseStamped
             pose_msg = PoseStamped()
             pose_msg.header.stamp = self.get_clock().now().to_msg()
             pose_msg.header.frame_id = "camera_optical_frame"
-
                 
             pose_msg.pose.position.x = float(tvec[0])
             pose_msg.pose.position.y = float(tvec[1])
             pose_msg.pose.position.z = float(tvec[2])
-            
 
-            # rotation
+            # Get raw rotation matrix and raw quaternion from OpenCV
             rot_matrix, _ = cv2.Rodrigues(rvec)
-            quat = self.rotation_matrix_to_quaternion(rot_matrix)
+            quat_raw = self.rotation_matrix_to_quaternion(rot_matrix)
+
+            # 2. Extract the raw measured Euler angles
+            siny_cosp = 2 * (quat_raw[3] * quat_raw[2] + quat_raw[0] * quat_raw[1])
+            cosy_cosp = 1 - 2 * (quat_raw[1] * quat_raw[1] + quat_raw[2] * quat_raw[2])
+            measured_yaw = np.arctan2(siny_cosp, cosy_cosp)
+
+            # Extract raw roll and pitch so we preserve them
+            sinr_cosp = 2 * (quat_raw[3] * quat_raw[0] + quat_raw[1] * quat_raw[2])
+            cosr_cosp = 1 - 2 * (quat_raw[0] * quat_raw[0] + quat_raw[1] * quat_raw[1])
+            measured_roll = np.arctan2(sinr_cosp, cosr_cosp)
+            
+            sinp = 2 * (quat_raw[3] * quat_raw[1] - quat_raw[2] * quat_raw[0])
+            measured_pitch = np.arcsin(np.clip(sinp, -1.0, 1.0))
+
+            # 3. Calculate the true, minimal angular step change between frames
+            if not self.is_yaw_initialized:
+                # First frame catch: lock the current raw yaw as our starting anchor
+                self.last_valid_yaw = measured_yaw
+                self.is_yaw_initialized = True
+                wrapped_yaw_delta = 0.0
+            else:
+                # Normal operation: compute relative delta variations safely
+                raw_yaw_delta = measured_yaw - self.last_valid_yaw
+                wrapped_yaw_delta = np.arctan2(np.sin(raw_yaw_delta), np.cos(raw_yaw_delta))
+
+                # Check if the PnP solver suddenly flipped 180 degrees
+                if abs(wrapped_yaw_delta - raw_yaw_delta) > (np.pi / 2.0):
+                    self.get_logger().warn("[ANTI-DISCONTINUITY] Blocked a 180-degree ArUco orientation flip.")
+            
+            # 4. Step your historical baseline forward ONLY by the true, clean delta
+            self.last_valid_yaw += wrapped_yaw_delta
+            self.last_valid_yaw = np.arctan2(np.sin(self.last_valid_yaw), np.cos(self.last_valid_yaw))
+
+            # 5. Reconstruct the clean quaternion using your latched smooth yaw
+            cy = np.cos(self.last_valid_yaw * 0.5)
+            sy = np.sin(self.last_valid_yaw * 0.5)
+            cp = np.cos(measured_pitch * 0.5)
+            sp = np.sin(measured_pitch * 0.5)
+            cr = np.cos(measured_roll * 0.5)
+            sr = np.sin(measured_roll * 0.5)
+
+            quat = [
+                sr * cp * cy - cr * sp * sy,  # x
+                cr * sp * cy + sr * cp * sy,  # y
+                cr * cp * sy - sr * sp * cy,  # z
+                cr * cp * cy + sr * sp * sy   # w
+            ]
+
+            # 6. Safely send the fully continuous quaternion out to the EKF pipeline
             pose_msg.pose.orientation.x = quat[0]
             pose_msg.pose.orientation.y = quat[1]
             pose_msg.pose.orientation.z = quat[2]
             pose_msg.pose.orientation.w = quat[3]
 
-            # 2. Transform from roll_link to base_link
+            # 2. Transform from camera_optical_frame to base_link
             try:
-                # Get the latest transform in the tree
-                # transform = self.tf_buffer.lookup_transform(
-                #     'base_link', 
-                #     'camera_optical_frame', 
-                #     rclpy.time.Time())
-                
                 transform = self.tf_buffer.lookup_transform(
                     'base_link', 
                     'camera_optical_frame', 
-                    rclpy.time.Time(),  
-                    )
+                    rclpy.time.Time()
+                )
 
                 # Transform the pose
                 pose_base_link = do_transform_pose(pose_msg.pose, transform)
@@ -185,31 +194,19 @@ class ArucoDetector(Node):
             except Exception as e:
                 self.get_logger().error(f"TF Transform failed: {e}")
 
-
-
-            # self.pose_pub.publish(pose_msg)
-
             detected_msg.data = True
 
-            # ===== Added print statements =====
-            # print("===== ArUco Marker Detected =====")
-            # print(f"Marker Center (pixels): x={cx:.2f}, y={cy:.2f}")
-            # print(f"Marker Position (m): x={tvec[0]:.3f}, y={tvec[1]:.3f}, z={tvec[2]:.3f}")
-            # print(f"Marker Orientation (quaternion): x={quat[0]:.3f}, y={quat[1]:.3f}, z={quat[2]:.3f}, w={quat[3]:.3f}")
-            # print(f"Detection Status: {detected_msg.data}")
-            # print("=================================")
-
         else:
+            # Marker is genuinely lost
             if self.tag_detected:
                 self.tag_detected = False
+                self.is_yaw_initialized = False  # Allows clean baseline lock on re-detection
                 with TRACK_FLAG_LOCK:
                     TRACK_FLAG = '0'
                 self.get_logger().info("Marker lost — TRACK_FLAG = 0")
             self.marker_center = None
-
-            
     
-            # Publish a "null" pose with zeros or NaN
+            # Publish a "null" pose with NaNs
             null_pose = PoseStamped()
             null_pose.header.stamp = self.get_clock().now().to_msg()
             null_pose.header.frame_id = "base_link"
@@ -218,11 +215,6 @@ class ArucoDetector(Node):
             null_pose.pose.position.z = float('nan')
             self.pose_pub.publish(null_pose)
 
-            # print lost status
-            # print("===== ArUco Marker Lost =====")
-            # print("Detection Status: False")
-            # print("==============================")
-
         self.detected_pub.publish(detected_msg)
 
         cv2.imshow("Aruco Detection", frame)
@@ -230,17 +222,37 @@ class ArucoDetector(Node):
 
     @staticmethod
     def rotation_matrix_to_quaternion(R):
-        qw = np.sqrt(1 + R[0,0] + R[1,1] + R[2,2]) / 2
-        qx = (R[2,1] - R[1,2]) / (4*qw)
-        qy = (R[0,2] - R[2,0]) / (4*qw)
-        qz = (R[1,0] - R[0,1]) / (4*qw)
+        """Robust Sheppard's method to prevent division-by-zero near 180-deg configurations."""
+        tr = R[0,0] + R[1,1] + R[2,2]
+        if tr > 0:
+            S = np.sqrt(tr + 1.0) * 2
+            qw = 0.25 * S
+            qx = (R[2,1] - R[1,2]) / S
+            qy = (R[0,2] - R[2,0]) / S
+            qz = (R[1,0] - R[0,1]) / S
+        elif (R[0,0] > R[1,1]) and (R[0,0] > R[2,2]):
+            S = np.sqrt(1.0 + R[0,0] - R[1,1] - R[2,2]) * 2
+            qw = (R[2,1] - R[1,2]) / S
+            qx = 0.25 * S
+            qy = (R[0,1] + R[1,0]) / S
+            qz = (R[0,2] + R[2,0]) / S
+        elif R[1,1] > R[2,2]:
+            S = np.sqrt(1.0 + R[1,1] - R[0,0] - R[2,2]) * 2
+            qw = (R[0,2] - R[2,0]) / S
+            qx = (R[0,1] + R[1,0]) / S
+            qy = 0.25 * S
+            qz = (R[1,2] + R[2,1]) / S
+        else:
+            S = np.sqrt(1.0 + R[2,2] - R[0,0] - R[1,1]) * 2
+            qw = (R[1,0] - R[0,1]) / S
+            qx = (R[0,2] + R[2,0]) / S
+            qy = (R[1,2] + R[2,1]) / S
+            qz = 0.25 * S
         return [qx, qy, qz, qw]
-
 
 def main(args=None):
     rclpy.init(args=args)
     node = ArucoDetector()
-
     try:
         rclpy.spin(node)
     except KeyboardInterrupt:
@@ -250,7 +262,5 @@ def main(args=None):
         rclpy.shutdown()
         cv2.destroyAllWindows()
 
-
 if __name__ == '__main__':
     main()
-

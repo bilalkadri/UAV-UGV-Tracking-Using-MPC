@@ -113,8 +113,8 @@ def generate_launch_description():
     # ----- Launch args -----
     
     
-    world_default = str(Path(pkg_ap_gazebo) / "worlds" / "iris_runway.sdf")
-    #world_default = str(Path(pkg_ap_gazebo) / "worlds" / "rough_terrain.sdf")
+    #world_default = str(Path(pkg_ap_gazebo) / "worlds" / "iris_runway.sdf")
+    world_default = str(Path(pkg_ap_gazebo) / "worlds" / "rough_terrain.sdf")
 
     
     args = [

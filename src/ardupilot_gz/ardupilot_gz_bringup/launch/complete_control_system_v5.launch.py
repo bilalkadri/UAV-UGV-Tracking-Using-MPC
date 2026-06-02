@@ -37,7 +37,8 @@ def generate_launch_description():
             'ros2', 'bag', 'record', '-a',
             '-o', bag_file,
             '--storage', 'sqlite3',
-            '--use-sim-time' # Added this flag so the bag records simulation time
+            '--use-sim-time' ,# Added this flag so the bag records simulation time
+            '--polling-interval', '1000'  # 🌟 CRITICAL: Checks for new/renamed topics every 1000ms
         ],
         output='screen',
         shell=False
@@ -69,7 +70,7 @@ def generate_launch_description():
 
     ekf_trajectory_estimator_launch_test = Node(
         package='ardupilot_gz_bringup',
-        executable='Traj_Pred_EKF_Pub_v11.py',
+        executable='UGV_Location_Prediction_EKF_v11.py',
         parameters=[{'use_sim_time': use_sim_time}], # Linked to LaunchConfiguration
         output='screen'
     )
@@ -105,7 +106,7 @@ def generate_launch_description():
     #   DELAYED NMPC CONTROLLER
     # ==========================
     controller_launch = TimerAction(
-        period=1.0,  # delay in seconds
+        period=1.0,# delay in seconds
         actions=[
             Node(
                 package='ardupilot_gz_bringup',

@@ -80,15 +80,15 @@ def move_jackal_forward(node, duration=5.0, speed=0.4):
         time.sleep(dt)
 
 # ============================================================
-# ============ MPC VELOCITY SUBSCRIBER NODE ==================
+# ============ CONTROLLER VELOCITY SUBSCRIBER NODE ==================
 # ============================================================
-class MPCVelocitySubscriber(Node):
+class ControllerVelocitySubscriber(Node):
     def __init__(self, master, start_time):
         """
-        Subscribes to /mpc/cmd_vel and sends MPC velocity commands
+        Subscribes to /controller/cmd_vel and sends controller velocity commands
         directly to the drone via MAVLink.
         """
-        super().__init__('mpc_velocity_subscriber')
+        super().__init__('controller_velocity_subscriber')
 
         self.master = master
         self.start_time = start_time
@@ -96,12 +96,12 @@ class MPCVelocitySubscriber(Node):
         # Subscribe to MPC output topic
         self.subscription = self.create_subscription(
             TwistStamped,
-            '/mpc/cmd_vel',
+            '/controller/cmd_vel',
             self.cmd_callback,
             20
         )
 
-        self.get_logger().info("MPCVelocitySubscriber Node Started — listening on /mpc/cmd_vel")
+        self.get_logger().info("ControllerVelocitySubscriber Node Started — listening on /controller/cmd_vel")
 
     # ----------------------------------------------------------
     #  When MPC publishes velocities, send them directly to UAV
@@ -220,7 +220,7 @@ def send_velocity(master, vx, vy, vz, yaw_rate, start_time):
     try:
         time_boot_ms = int((time.time() - start_time) * 1000)
         
-        print(f"[SEND] Sending to drone: vx={vx:.3f}, vy={vy:.3f}, vz={vz:.3f}, yaw_rate={yaw_rate:.3f}")
+        # print(f"[SEND] Sending to drone: vx={vx:.3f}, vy={vy:.3f}, vz={vz:.3f}, yaw_rate={yaw_rate:.3f}")
         
 
         master.mav.set_position_target_local_ned_send(
@@ -276,26 +276,8 @@ def main():
 
     rclpy.init()
     
-    # create nodes
-    #node = ArucoDetector(master)
-    #ekf_node = RelativePoseEKF()
-    #vel_node = UAVVelocityEstimator()
-    #mpc_node = SimpleMPCNode()
-    #plotter_node = PlotterNode()
-
-    # NEW MPC subscriber node
-    #start_time = time.time()
-    #mpc_subscriber = MPCVelocitySubscriber(master,start_time)
-
     # create an executor and add nodes (use multiple threads to allow callbacks in parallel)
     executor = MultiThreadedExecutor()
-    #executor.add_node(node)
-    #executor.add_node(ekf_node)
-    #executor.add_node(vel_node)
-    #executor.add_node(mpc_node)
-    #executor.add_node(plotter_node)
-    #executor.add_node(mpc_subscriber) 
-    
 
     # spin executor in a background thread
     executor_thread = threading.Thread(target=executor.spin, daemon=True)
@@ -305,14 +287,6 @@ def main():
     # optional events for other threads (avoid NameError on cleanup)
     plot_stop_event = threading.Event()
     stop_event_rect = threading.Event()
-
-    # start jackal rectangular motion publisher (optional)
-    # jackal_pub = node.create_publisher(
-    #    TwistStamped, '/jackal/jackal_velocity_controller/cmd_vel', 10
-    # )
-    # stop_event_rect = threading.Event()
-    # pub_thread = threading.Thread(target=publish_rectangle, args=(node, jackal_pub, stop_event_rect), daemon=True)
-    # pub_thread.start()
 
     # UAV takeoff and hover
     takeoff_and_wait(master, TARGET_ALT_M)
@@ -327,13 +301,13 @@ def main():
     time.sleep(1.0)   # ensure UAV is stable after takeoff
     
     # -----------------------------------------------------------
-    # START MPC SUBSCRIBER ONLY NOW — AFTER TAKEOFF IS COMPLETE
+    # START CONTROLLER SUBSCRIBER ONLY NOW — AFTER TAKEOFF IS COMPLETE
     # -----------------------------------------------------------
     start_time = time.time()
-    mpc_subscriber = MPCVelocitySubscriber(master, start_time)
+    mpc_subscriber = ControllerVelocitySubscriber(master, start_time)
     executor.add_node(mpc_subscriber)
 
-    #node.get_logger().info("MPC subscriber activated — ready to receive /mpc/cmd_vel")
+    #node.get_logger().info("Controller subscriber activated — ready to receive /controller/cmd_vel")
 
     # ---------------------------
     # Keep main alive (run until Ctrl+C)
@@ -345,31 +319,6 @@ def main():
     except KeyboardInterrupt:
          print("KeyboardInterrupt received — starting shutdown/landing")
 
-    #try:
-        #  UAV initial searching motion (forward / yaw scan) until marker detected.
-        #while rclpy.ok():
-            #with TRACK_FLAG_LOCK:
-                #local_flag = TRACK_FLAG
-
-            #if local_flag == '0':
-                #vx_search, vy_search, vz, yaw_rate = 0.0, 0.0, 0.0, 0.1
-
-                # keep sending search velocity until marker is detected (TRACK_FLAG becomes '1')
-                #while True:
-                    #with TRACK_FLAG_LOCK:
-                        #if TRACK_FLAG == '1':
-                            #break
-                    #send_velocity(master, vx_search, vy_search, vz, yaw_rate, start_time)
-                    #time.sleep(dt)
-                # when marker found the follow_ugv thread will take over
-            #else:
-                # small sleep to avoid busy-looping when marker already seen
-                #time.sleep(0.1)
-
-    #except KeyboardInterrupt:
-        #print("Keyboard interrupt — cleaning up and landing...")
-
-    # graceful shutdown: stop threads and land
     plot_stop_event.set()
     stop_event_rect.set()
 
@@ -380,48 +329,20 @@ def main():
     except Exception as e:
         print("Error during landing sequence:", e)
 
-            # Shutdown rclpy executor cleanly
+            
     
     try:
         executor.shutdown(wait=False)
     except Exception:
         pass
 
-        # remove nodes from executor, then destroy
+        
     try:
-        #executor.remove_node(node)
-        #executor.remove_node(ekf_node)
-        #executor.remove_node(vel_node)
-        #executor.remove_node(mpc_node)
-        #executor.remove_node(plotter_node)
         executor.remove_node(mpc_subscriber)
     except Exception:
         pass
 
-    # try:
-    #     node.destroy_node()
-    # except Exception:
-    #     pass
 
-    # try:
-    #     ekf_node.destroy_node()
-    # except Exception:
-    #     pass
-
-    # try:
-    #     vel_node.destroy_node()          
-    # except Exception:
-    #     pass
-
-    # try:
-    #     mpc_node.destroy_node()          
-    # except Exception:
-    #     pass
-        
-    #try:
-        #plotter_node.destroy_node()
-    #except Exception:
-        #pass
 
     try:
         mpc_subscriber.destroy_node()

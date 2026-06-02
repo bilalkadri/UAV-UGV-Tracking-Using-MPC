@@ -23,16 +23,16 @@ class JackalMover(Node):
         self.dt = 0.05  # 20Hz
         
         # --- Linear Mode Params ---
-        self.dist = 5.0
-        self.v_fwd, self.v_bwd = 0.1, -0.1
+        self.dist = 10.0
+        self.v_fwd, self.v_bwd = 0.5, -0.5
         self.pause_dur = 1.0
         self.t_fwd = self.dist / abs(self.v_fwd)
         self.t_bwd = self.dist / abs(self.v_bwd)
 
         # --- Rectangle Mode Params ---
-        self.Lx, self.Ly = 3.0, 3.0
+        self.Lx, self.Ly = 10.0, 10.0
         self.radius = 0.6
-        self.v_rec = 0.1
+        self.v_rec = 0.25
         self.w_rec = 0.45
         self.t_str_x = (self.Lx - 2 * self.radius) / self.v_rec
         self.t_str_y = (self.Ly - 2 * self.radius) / self.v_rec
@@ -126,7 +126,10 @@ def main(args=None):
     # Use "LINEAR" for Forward/Backward or 
     # "RECTANGLE" for the rectangle or
     #  "ROTATE"  for rotating at a place
-    node = JackalMover(mode="LINEAR") 
+    node = JackalMover(mode="LINEAR")
+
+     # ==========================
+     # 
     
     try:
         rclpy.spin(node)

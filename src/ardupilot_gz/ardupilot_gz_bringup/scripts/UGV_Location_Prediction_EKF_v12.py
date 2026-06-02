@@ -52,7 +52,7 @@ class AbsolutePoseEKF(Node):
     # Initializes buffers: For storing UAV/UGV velocities and positions
     # Starts timer: Calls ekf_predict_publish() every dt (0.01s) seconds
 
-        super().__init__('relative_pose_ekf_and_trajectory_prediction_node')
+        super().__init__('ugv_pose_ekf_and_trajectory_prediction_node')
         # self.declare_parameter('use_sim_time', True)
 
         if not self.has_parameter('use_sim_time'):
@@ -107,8 +107,10 @@ class AbsolutePoseEKF(Node):
         self.ugv_pos_and_orient_in_UAV_frame[3, 0] = 0.0   # roll
         self.ugv_pos_and_orient_in_UAV_frame[4, 0] = 0.0   # pitch
         self.ugv_pos_and_orient_in_UAV_frame[5, 0] = -1.55   # yaw  -1.55 radians (approximately -89°)this is from Gazebo world
-        self.P = np.eye(6) * 0.1
-        self.Q = np.eye(6) * 0.2
+        #self.P = np.eye(6) * 0.1   #combination 1
+        self.P = np.eye(6) * 1  # Increased initial uncertainty for more responsiveness
+        #self.Q = np.eye(6) * 0.2  #combination 1
+        self.Q = np.eye(6)*0.001
 
 
         # ====================== Bumpless Mode Switching Variables ======================
@@ -148,7 +150,8 @@ class AbsolutePoseEKF(Node):
         self.vz_mpc=0
         self.yaw_dot_mpc=0
 
-        pos_sigma = 0.04
+        pos_sigma = 0.04 #combination 1
+        pos_sigma = 0.1 #combination 2
         ang_sigma = radians(2.0)
         self.R = np.diag([
             pos_sigma**2, pos_sigma**2, pos_sigma**2,
@@ -176,7 +179,7 @@ class AbsolutePoseEKF(Node):
         self.create_subscription(Odometry, '/jackal/jackal_velocity_controller/odom', self.ugv_pose_cb, 10) # in jackal/odom frame
         self.create_subscription(Bool, '/aruco/detected', self.aruco_detected_cb, 10)
         self.create_subscription(PoseStamped, '/aruco/pose', self.aruco_pose_cb, 10)
-        self.create_subscription(TwistStamped,'/mpc/cmd_vel',self.control_signal_cmd_vel_cb,10)
+        self.create_subscription(TwistStamped,'/controller/cmd_vel',self.control_signal_cmd_vel_cb,10)
         
         # UAV Position subscriber
         qos_profile = QoSProfile(
@@ -205,7 +208,7 @@ class AbsolutePoseEKF(Node):
 
         self.pub_maha = self.create_publisher(Float32, '/ekf/mahalanobis_distance', 10)
 
-        self.debug_pub = self.create_publisher(PoseStamped, '/debug/ekf_ugv_world', 10)
+        self.pub_debug_kinematics = self.create_publisher(PoseStamped, '/debug/transformed_aruco_pose', 10)
 
         # Mode publisher for visualization
         self.mode_pub = self.create_publisher(String, '/tracking_mode', 10)
@@ -584,371 +587,140 @@ class AbsolutePoseEKF(Node):
         )
             
  
+
+
     def run_ekf_mode(self):
-    # """All your existing EKF code goes here"""
-        # print("[EKF] Running EKF mode")
-        # ============= ⭐⭐ CRITICAL FIX: Prediction Step ⭐⭐ =============
-        # Your EKF state is in UAV body frame, so we need to handle it properly
-        
-        # --- Prediction step ---
-        #    v_g is in UGV body frame (from /odometry), v_u is in UAV body frame (from /ap/twist/filtered)
-        # CANNOT subtract directly - different frames! Need transformation
-        # rel_vel = v_g - v_u is WRONG - mixing body frames
-        # Must transform both to common frame first (UAV body frame)
-        # Transform UGV velocity: v_g_uav_body = R_uav.T @ R_ugv @ v_g
-        # Correct approach: Transform UGV velocity from UGV body frame to UAV body frame before subtraction.
-     
-        # rel_vel = self.v_g - self.v_u   
-        # rel_omega = self.omega_g - self.omega_u
-
-        # Transform relative velocity from world frame to UAV body frame
-
-        # 
-
-        # ============= ⭐⭐ ISSUE 1: Missing adaptive Q matrix ⭐⭐ =============
-        # ADD THIS AT THE BEGINNING:
-        # Update Q matrix based on current angular velocity
-        uav_omega_mag = np.linalg.norm(self.uav_ang_vel_wrt_odom_frame_expressed_in_base_link)
-        rotation_noise_scale = 1.0 + uav_omega_mag * 0.5  # More noise when rotating fast
-        innovation = None
-        P_diag = None
-
-        # Base noise values (tune these!)
-        pos_noise = 0.0001
-        ang_noise = 0.0005
-        
-        self.Q = np.diag([
-            pos_noise * rotation_noise_scale,
-            pos_noise * rotation_noise_scale, 
-            pos_noise * rotation_noise_scale,
-            ang_noise * rotation_noise_scale,
-            ang_noise * rotation_noise_scale,
-            ang_noise * rotation_noise_scale
-        ])
-
-
-        # This creates UGV ROTATION MATRIX:
-        # this code is creating a ROTATION MATRIX:
-        # self.ugv_yaw_in_jackal_odom_frame is UGV's heading angle (scalar, in radians)
-        # R_ugv is a 3×3 rotation matrix that rotates vectors by ugv_yaw_in_jackal_odom_frame
-        #  around Z-axis
-        # Purpose: To transform vectors from UGV body frame to world frame
-        # Example: If UGV has yaw = 30°, R_ugv rotates vectors by 30° around Z
-        # Use: v_world = R_ugv @ v_body converts UGV body frame velocity to world frame
+        dt = self.dt
+    
+        # ------------------------------------------------------------------
+        # 1. PREDICTION STEP (Purely Linear Inertial Frame Math)
+        # ------------------------------------------------------------------
+        # Define the 3D Rotation Matrix from UGV body to World (Odom) frame
         R_ugv_to_odom = np.array([
             [np.cos(self.ugv_yaw_in_jackal_odom_frame), -np.sin(self.ugv_yaw_in_jackal_odom_frame), 0],
-            [np.sin(self.ugv_yaw_in_jackal_odom_frame), np.cos(self.ugv_yaw_in_jackal_odom_frame), 0],
+            [np.sin(self.ugv_yaw_in_jackal_odom_frame),  np.cos(self.ugv_yaw_in_jackal_odom_frame), 0],
             [0, 0, 1]
         ])
         
-      
-        # This creates UAV ROTATION MATRIX:
-        # self.uav_yaw_in_odom_frame is UAV's heading angle (scalar, in radians)
-        # R_uav is a 3×3 rotation matrix that rotates vectors by uav_yaw around Z-axis
-        # Purpose: To transform vectors between UAV body frame and world frame
-        # Forward: R_uav @ v_body → transforms from UAV body to world frame
-        # Inverse: R_uav.T @ v_world → transforms from world to UAV body frame
-
-
-        R_uav_to_odom = np.array([
-            [np.cos(self.uav_yaw_in_odom_frame), -np.sin(self.uav_yaw_in_odom_frame), 0],
-            [np.sin(self.uav_yaw_in_odom_frame), np.cos(self.uav_yaw_in_odom_frame), 0],
-            [0, 0, 1]
-        ])
+        # Transform UGV body velocity to absolute World velocity
+        v_g_body = self.ugv_lin_vel_wrt_jackal_odom_frame_expressed_in_jackal_base_link.flatten()
+        v_g_world = R_ugv_to_odom @ v_g_body
         
-        # self.v_g is the UGV's velocity in the UGV's body frame
-        # Transform UGV velocity from UGV body frame to world frame
-        v_g_world = R_ugv_to_odom @ self.ugv_lin_vel_wrt_jackal_odom_frame_expressed_in_jackal_base_link.reshape(3, 1)
+        # Simple Linear Prediction: State is UGV absolute position in world frame
+        # self.ugv_pos_and_orient_in_UAV_frame must be initialized as a 3x1 or 6x1 absolute world vector
+        self.ugv_pos_and_orient_in_UAV_frame[0:3, 0] += v_g_world * dt
+
+        # Fully Linear System Matrix: F = Identity (since dx/dt = v)
+        F = np.eye(6) 
         
-        # Transform UGV velocity from world frame to UAV body frame
-        v_g_uav_body = R_uav_to_odom.T @ v_g_world
-        
-        # UAV velocity is already in UAV body frame
-        v_u_body = self.uav_lin_vel_wrt_odom_frame_expressed_in_base_link.reshape(3, 1)
-        
-        # Calculate relative velocity in UAV body frame
-        rel_vel_body = v_g_uav_body - v_u_body
-        
-        # Angular velocities: both in body frames, but need transformation
-        # Transform UGV angular velocity to UAV body frame
-
-        # UGV body frame angular velocity → world frame → UAV body frame
-        omega_g_uav_body = R_uav_to_odom.T @ R_ugv_to_odom @ self.ugv_ang_vel_wrt_jackal_odom_frame_expressed_in_jackal_base_link.reshape(3, 1)
-
-        # UAV angular velocity is already in UAV body frame
-        omega_u_body = self.uav_ang_vel_wrt_odom_frame_expressed_in_base_link.reshape(3, 1)
-
-        # relative angular velocity in UAV body frame
-        rel_omega = omega_g_uav_body - omega_u_body
-        
-        # Update state (all in UAV body frame)
-        # self.x[0:3, 0] = UGV position relative to UAV (in UAV body frame)
-        # rel_vel_body * dt = displacement due to relative velocity over time step
-        # First line: Updates relative position using relative linear velocity
-        # self.x[3:6, 0] = UGV orientation relative to UAV (roll, pitch, yaw)
-        # Second line: Updates relative orientation using relative angular velocity
-
-        # Your current prediction step is missing the Coriolis/cross-coupling term that arises from rotating reference frames. When you have a position 
-        # in a rotating frame (UAV body frame), the derivative has an additional term:
-        # self.x[0:3, 0] += rel_vel_body.flatten() * self.dt
-
-        # CRITICAL FIX: Include cross-coupling term
-        # For position in rotating frame: dp/dt = v_rel - ω × p
-        # ============= ⭐⭐ ISSUE 2: CORRECT CROSS PRODUCT TERM ⭐⭐ =============
-        # ω × p where ω is angular velocity of the BODY FRAME (UAV)
-        # This should be: dp/dt = v_rel - ω × p
-        omega_cross_p = np.cross(omega_u_body.flatten(), self.ugv_pos_and_orient_in_UAV_frame[0:3, 0].flatten())
-
-
-        # Update position with complete kinematics
-        
-        # self.x is UGV position relative to UAV (in UAV body frame)
-        self.ugv_pos_and_orient_in_UAV_frame[0:3, 0] += (rel_vel_body.flatten() - omega_cross_p) * self.dt
-        # self.x[3:6, 0] = UGV orientation relative to UAV (roll, pitch, yaw)
-        self.ugv_pos_and_orient_in_UAV_frame[3:6, 0] += rel_omega.flatten() * self.dt
-        
-        #-------------------------------------------------------
-        # --------------For Debugging Purpose-------------------
-        #-------------------------------------------------------
-        ugv_pos_body = self.ugv_pos_and_orient_in_UAV_frame[0:3, 0].reshape(3, 1)
-
-        # CHANGED: Use the Transpose (.T) matrix here
-        ugv_pos_world = R_uav_to_odom.T @ ugv_pos_body
-        # ugv_pos_world = R_uav_to_odom @ ugv_pos_body  # Transform to world frame
-
-        debug_msg = PoseStamped()
-        debug_msg.header.frame_id = 'odom'
-        debug_msg.pose.position.x = float(ugv_pos_world[0])
-        debug_msg.pose.position.y = float(ugv_pos_world[1])
-        debug_msg.pose.position.z = float(ugv_pos_world[2])
-        
-
-        # Add orientation from EKF state:
-        # self.x[3:6] contains [roll, pitch, yaw] relative to UAV
-        roll, pitch, yaw = self.ugv_pos_and_orient_in_UAV_frame[3:6, 0].flatten()
-
-        # Convert to quaternion
-        #yaw_to_ugv 
-        qx, qy, qz, qw = self.rpy_to_quat(roll, pitch, yaw)
-        debug_msg.pose.orientation.x = qx
-        debug_msg.pose.orientation.y = qy
-        debug_msg.pose.orientation.z = qz
-        debug_msg.pose.orientation.w = qw
-        self.debug_pub.publish(debug_msg)
-
-        # Wrap angles to [-pi, pi]
-        for i in range(3, 6):
-            self.ugv_pos_and_orient_in_UAV_frame[i, 0] = ((self.ugv_pos_and_orient_in_UAV_frame[i, 0] + np.pi) % (2*np.pi)) - np.pi
-
-        # ============= ⭐⭐ ISSUE 4: JACOBIAN CALCULATION PROBLEM ⭐⭐ =============
-        # omega_u_body is a numpy array with shape (3,1), you need to flatten it
-        omega_u_flat = omega_u_body.flatten()
-        
-        F = np.eye(6)
-        
-        # Position part: ∂f/∂p = I - [ω×] * dt
-        omega_skew = np.array([
-            [0, -omega_u_flat[2], omega_u_flat[1]],
-            [omega_u_flat[2], 0, -omega_u_flat[0]],
-            [-omega_u_flat[1], omega_u_flat[0], 0]
-        ])
-
-
-        
-        # F[0:3, 0:3] = np.eye(3) - omega_skew * self.dt
-        # CHANGED: Added omega_skew instead of subtracting it to match state dynamics
-        F[0:3, 0:3] = np.eye(3) - omega_skew * self.dt
-        # ============= ⭐⭐ ISSUE 5: ADD ∂f/∂v TERM ⭐⭐ =============
-        # Your state has velocity implicitly in the prediction
-        # Add the Jacobian for velocity terms if you're using a velocity state
-        # If not using velocity state, you need to propagate uncertainty from velocity noise
-        # F[0:3, 3:6] = np.eye(3) * self.dt  # Uncomment if using velocity state
-        
-        # Update covariance using your active state variables and the synchronized F matrix
+        # Propagate covariance smoothly
         self.P = F @ self.P @ F.T + self.Q
+
+        # ------------------------------------------------------------------
+        # 2. UPDATE STEP (Transform Measurement to World Frame)
+        # ------------------------------------------------------------------
+        update_applied = False
+        maha_value = -1.0
+
+        if self.aruco_detected and (self.aruco_pose_measurement is not None):
+            # 3D Rotation Matrix from UAV body to World (Odom) frame
+            R_uav_to_odom = np.array([
+                [np.cos(self.uav_yaw_in_odom_frame), -np.sin(self.uav_yaw_in_odom_frame), 0],
+                [np.sin(self.uav_yaw_in_odom_frame),  np.cos(self.uav_yaw_in_odom_frame), 0],
+                [0, 0, 1]
+            ])
+            
+            # Relative vector from UAV to UGV in UAV body frame (from ArUco)
+            p_rel_uav_frame = np.array([
+                self.aruco_pose_measurement.pose.position.x,
+                self.aruco_pose_measurement.pose.position.y,
+                self.aruco_pose_measurement.pose.position.z
+            ])
+            
+            # Transform the relative measurement into the absolute world frame
+            p_rel_world_frame = R_uav_to_odom @ p_rel_uav_frame
+            
+            # Calculate expected absolute UGV position based on ArUco:
+            # UGV_world = UAV_world + Relative_Vector_world
+            z_x = self.uav_position_in_odom_frame[0] + p_rel_world_frame[0]
+            z_y = self.uav_position_in_odom_frame[1] + p_rel_world_frame[1]
+            z_z = self.uav_position_in_odom_frame[2] + p_rel_world_frame[2]
+            
+            # For debugging purposes, let's publish the transformed ArUco measurement in the world frame to visualize where the EKF thinks the UGV is based on the ArUco measurement alone (without EKF fusion)
+            # Pack into a PoseStamped message mapped directly to the 'odom' frame
+            debug_msg = PoseStamped()
+            debug_msg.header.stamp = self.get_clock().now().to_msg()
+            debug_msg.header.frame_id = 'odom'
+            
+            debug_msg.pose.position.x = float(z_x)
+            debug_msg.pose.position.y = float(z_y)
+            debug_msg.pose.position.z = float(z_z)
+            
+            # Forward the orientation configuration directly for reference mapping
+            # debug_msg.pose.orientation = self.aruco_pose_measurement.pose.orientation
+            debug_msg.pose.orientation.x = self.aruco_pose_measurement.pose.orientation.x
+            debug_msg.pose.orientation.y = self.aruco_pose_measurement.pose.orientation.y
+            debug_msg.pose.orientation.z = self.aruco_pose_measurement.pose.orientation.z
+            debug_msg.pose.orientation.w = self.aruco_pose_measurement.pose.orientation.w
+
+
+            # Broadcast to the offline analysis pipeline
+            # pub_debug_kinematics is a publisher that sends the transformed ArUco measurement 
+            # in the world frame to a topic named '/debug/transformed_aruco_pose'. 
+            # This allows us to visualize where the EKF thinks the UGV is based solely 
+            # on the ArUco measurement, without any EKF fusion. 
+            # By comparing this debug visualization with the EKF's final estimate, 
+            # we can gain insights into how much the EKF is correcting the raw
+            #  ArUco measurement and whether there are any systematic biases or errors 
+            # in the measurement transformation process.
+            
+            self.pub_debug_kinematics.publish(debug_msg)
+            print("I AM PRINTING DEBUG MSG:", debug_msg)
+
+
+
+            q = self.aruco_pose_measurement.pose.orientation
+            meas_roll, meas_pitch, meas_yaw = self.quat_to_rpy(q)
+            
+            # Create our absolute measurement vector
+            z = np.array([[z_x], [z_y], [z_z], [meas_roll], [meas_pitch], [meas_yaw]])
+            
+            # Innovation (Difference in absolute coordinates)
+            y = z - self.ugv_pos_and_orient_in_UAV_frame
+            for i in range(3, 6):
+                y[i, 0] = math.atan2(math.sin(y[i, 0]), math.cos(y[i, 0]))
+                
+            S = self.P + self.R
+            Sinv = np.linalg.pinv(S)
+            maha_value = float((y.T @ Sinv @ y)[0, 0])
+            
+            if maha_value <= self.mahalanobis_threshold:
+                K = self.P @ Sinv
+                self.ugv_pos_and_orient_in_UAV_frame += K @ y
+                self.P = (np.eye(6) - K) @ self.P
+                update_applied = True
+        # ------------------------------------------------------------------
+        # 3. ROS 2 DIAGNOSTICS & PUBLISHING
+        # ------------------------------------------------------------------
+        self.pub_maha.publish(Float32(data=maha_value))
+        self.pub_update_flag.publish(Bool(data=update_applied))
         
-        # Covariance update: 
-        # self.P = 0.995 * self.P  # Damping to prevent explosion, tune as needed
-        # self.P = (self.P + self.Q) * 0.98
-        # Adds process noise Q to covariance P (uncertainty grows with prediction)
-        # Multiplies by 0.98 - Small damping to prevent covariance explosion
-        # self.P = (self.P + self.Q) * 0.98
-
-        # --- Update step (ArUco) ---
-        update_applied = False   # Flag to track if update was performed
-        maha_value = -1.0  # Default Mahalanobis distance value (no measurement)
-
-        # Check if ArUco marker is detected and measurement exists
-        # if self.aruco_detected and (self.aruco_meas is not None):
-        if (self.aruco_detected and  self.aruco_pose_measurement is not None and
-             not math.isnan(self.aruco_pose_measurement.pose.position.x)):
-            try:
-                # print(f"[EKF UPDATE] Starting update - detection=True, measurement valid")
-                # Extract orientation quaternion from ArUco measurement
-                q = self.aruco_pose_measurement.pose.orientation
-                # Convert quaternion to Euler angles (roll, pitch, yaw)
-                meas_roll, meas_pitch, meas_yaw = self.quat_to_rpy(q)
-
-                # In my ArucoDetector node, I already using tf2_ros to automatically look up the
-                # full 3D transform tree 
-                # from camera_optical_frame through the gimbal joints all the way to the UAV's base_link:
-                # This means the topic /aruco/pose is already published in the 
-                # UAV's base_link frame (Forward-Left-Up).
-
-                # Transform from camera frame to UAV body frame if needed
-                # This depends on your camera mounting
-                # # Example: if camera is mounted with 180° rotation around Z
-                # camera_to_body = np.array([
-                #     [-1, 0, 0],
-                #     [0, -1, 0],
-                #     [0, 0, 1]
-                # ])
-                # Correct matrix for a downward-facing camera 
-                # where Camera Top points to UAV Nose
-                # camera_to_body = np.array([
-                #     [ 0, -1,  0],  # UAV X (Forward) = - Camera Y
-                #     [-1,  0,  0],  # UAV Y (Left)    = - Camera X
-                #     [ 0,  0, -1]   # UAV Z (Up)      = - Camera Z
-                # ])
-                
-                
-                # 1. Transform Position
-                pos_body = np.array([
-                    self.aruco_pose_measurement.pose.position.x,
-                    self.aruco_pose_measurement.pose.position.y,
-                    self.aruco_pose_measurement.pose.position.z
-                ])
-                # pos_body = camera_to_body @ pos_camera
-                
-                # 2. Extract orientation directly from the message
-                body_roll, body_pitch, body_yaw = self.quat_to_rpy(q)
-                
-                # 3. Create measurement vector z in the correct frame
-                z = np.array([
-                    [pos_body[0]],
-                    [pos_body[1]],
-                    [pos_body[2]],
-                    [body_roll],
-                    [body_pitch],
-                    [body_yaw]
-                ])
-
-                # print(f"ArUco measurement: x={self.aruco_meas.pose.position.x:.2f}, y={self.aruco_meas.pose.position.y:.2f}, z={self.aruco_meas.pose.position.z:.2f}")
-                # Calculate innovation (difference between measurement and prediction)
-                y = z - self.ugv_pos_and_orient_in_UAV_frame
-                innovation = y.copy()
-                # Wrap angular differences to range [-π, π] to avoid discontinuity
-                for idx in range(3,6):
-                    ang = (float(y[idx,0]) + np.pi) % (2*np.pi) - np.pi
-                    y[idx,0] = ang
-                
-
-                # Calculate innovation covariance S = P + R
-                S = self.P + self.R
-
-                # Compute inverse of innovation covariance (for Kalman gain)
-                try:
-                    Sinv = np.linalg.inv(S)   # Try regular inverse
-                except:
-                    Sinv = np.linalg.pinv(S)   # Use pseudo-inverse if matrix is singular
-
-                # Calculate Mahalanobis distance = y^T * S^(-1) * y
-                maha_value = float((y.T @ Sinv @ y)[0,0])
-
-                # Check if measurement is valid (not an outlier)
-                if maha_value <= self.mahalanobis_threshold:
-                    print(f"[EKF UPDATE] Mahalanobis distance: {maha_value:.3f}, Threshold: {self.mahalanobis_threshold}")
-                    # Compute Kalman gain K = P * S^(-1)
-                    K = self.P @ Sinv
-                    # Update state estimate: x = x + K * y
-                    self.ugv_pos_and_orient_in_UAV_frame = self.ugv_pos_and_orient_in_UAV_frame + K @ y
-                     # Update covariance: P = (I - K) * P
-                    self.P = (np.eye(6) - K) @ self.P
-                    P_diag = np.diag(self.P).copy()
-
-                    # Set flag indicating update was applied
-                    update_applied = True
-
-            except Exception:
-                self.get_logger().error("Exception during EKF update:\n" + traceback.format_exc())
-
-        # Publish Mahalanobis distance
-        maha_msg = Float32()
-        maha_msg.data = float(maha_value)
-        self.pub_maha.publish(maha_msg)
-
-        # Publish update-applied flag
-        flag = Bool()
-        flag.data = update_applied
-        self.pub_update_flag.publish(flag)
-
-        # --- Publish EKF estimate (relative pose) ---
-        # ============= ⭐⭐ FIX: Publish at UAV position pointing to UGV ⭐⭐ =============
-        msg = PoseStamped()  #Creates empty PoseStamped message - for publishing relative pose
+        # State is already absolute world frame coordinates! Directly construct message:
+        msg = PoseStamped()
         msg.header.stamp = self.get_clock().now().to_msg()
-        # FIX 1: Set the Frame ID to the UAV's body frame
-        msg.header.frame_id = 'odom' #Sets frame_id to 'base_link' - message coordinates are in UAV frame
+        msg.header.frame_id = 'odom'
         
-      
-
-        # Get relative position from EKF
-        dx_uav_frame, dy_uav_frame, dz_uav_frame = self.ugv_pos_and_orient_in_UAV_frame[0:3, 0].flatten()
-        # dx_odom_frame, dy_odom_frame, dz_odom_frame = R_uav_to_odom @ self.ugv_pos_and_orient_in_UAV_frame[0:3, 0].reshape(3, 1).flatten()
-        p_uav = self.ugv_pos_and_orient_in_UAV_frame[0:3, 0].reshape(3,1)
-
-        # CHANGED: Reverted to standard forward-rotation mapping matrix
-        p_odom = R_uav_to_odom @ p_uav
-
-        dx_odom_frame, dy_odom_frame, dz_odom_frame = p_odom.flatten()
-       
-
+        msg.pose.position.x = float(self.ugv_pos_and_orient_in_UAV_frame[0, 0])
+        msg.pose.position.y = float(self.ugv_pos_and_orient_in_UAV_frame[1, 0])
+        msg.pose.position.z = float(self.ugv_pos_and_orient_in_UAV_frame[2, 0])
         
-        rel_pos_body = self.ugv_pos_and_orient_in_UAV_frame[0:3, 0].reshape(3, 1)
-
-        # Calculate direction vector
-        # The rotation calculation should use the vector *as defined in base_link* # 
-        # because the message is published in base_link.
-        # dx_uav_frame, dy_uav_frame, dz_uav_frame = rel_pos_body.flatten()
-        # print(f"Relative position: dx={dx_uav_frame:.2f}, dy={dy_uav_frame:.2f}, dz={dz_uav_frame:.2f}")
-       
-        # Calculate yaw and pitch relative to the base_link frame 
-        # (which is where the message is published)
-
-        # Temporarily hardcode a known position:
-        # Test: UGV should be 5m in front, 0m to side, 5m below
-        # dx, dy, dz = 5.0, 0.0, -5.0
-        yaw_to_ugv = np.arctan2(dy_uav_frame, dx_uav_frame)  # Should be 0° (straight ahead)
-        # Arrow should point straight ahead
-
-        # # Add 180° to yaw to point opposite direction
-        # yaw_to_ugv = np.arctan2(dy, dx) + np.pi  # Add 180 degrees
-        # # Wrap to [-π, π]
-        # yaw_to_ugv = ((yaw_to_ugv + np.pi) % (2*np.pi)) - np.pi
-
-        # Pitch: angle relative to the X-Y plane
-        # Note: pitch is usually zero for horizontal tracking
-        pitch_to_ugv = -np.arctan2(dz_uav_frame, np.sqrt(dx_uav_frame**2 + dy_uav_frame**2))
-
-                  
-        # Position: arrow starts at UAV origin
-        msg.pose.position.x = self.uav_position_in_odom_frame[0]+dx_odom_frame
-        msg.pose.position.y = self.uav_position_in_odom_frame[1]+dy_odom_frame
-        msg.pose.position.z = self.uav_position_in_odom_frame[2]+dz_odom_frame
-        
-        # qx, qy, qz, qw = self.rpy_to_quat(0.0, pitch_to_ugv, yaw_to_ugv)
-        qx, qy, qz, qw = self.rpy_to_quat(0,0,self.ugv_yaw_in_odom_frame)
+        qx, qy, qz, qw = self.rpy_to_quat(0.0, 0.0, self.ugv_yaw_in_odom_frame)
         msg.pose.orientation.x = qx
         msg.pose.orientation.y = qy
         msg.pose.orientation.z = qz
         msg.pose.orientation.w = qw
         
-
-
-       
-        # self.pub_absolute_only_ekf = self.create_publisher(PoseStamped, '/absolute_pose_ekf', 10) # publishing in  odom frame
-        self.pub_absolute_only_ekf.publish(msg) # publish on the topic /absolute_pose_ekf in /odom frame, this will be used for visualization and comparison with odometry-based absolute pose
-
-
+        self.pub_absolute_only_ekf.publish(msg)
         # Store the EKF pose so it can be used later for smooth blending
         # IMPORTANT: do NOT directly publish this to MPC
         self.last_ekf_pose = msg

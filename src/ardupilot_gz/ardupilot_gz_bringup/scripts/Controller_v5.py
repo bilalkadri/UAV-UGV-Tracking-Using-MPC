@@ -258,7 +258,7 @@ class Controller_for_UAV_Node(Node):
         # Subscribers
         # self.create_subscription(PoseStamped, '/relative_pose_odom_OR_ekf', self.rel_pose_odom_OR_ekf_cb, 10)
         self.create_subscription(Odometry, '/jackal/jackal_velocity_controller/odom', self.ugv_pose_cb, 10)
-        self.create_subscription(Path, '/predicted_trajectory', self.predicted_trajectory_cb, 10)
+        # self.create_subscription(Path, '/predicted_trajectory', self.predicted_trajectory_cb, 10)
         self.create_subscription(PoseStamped, '/ap/pose/filtered', self.uav_pose_cb, qos_profile)
         self.create_subscription(TwistStamped, '/ap/twist/filtered', self.uav_twist_cb, qos_profile)
         self.create_subscription(String,'/tracking_mode',self.mode_status_cb,10)
@@ -266,9 +266,9 @@ class Controller_for_UAV_Node(Node):
         # self.pub_absolute_pose_blended_odometry_OR_ekf = self.create_publisher(PoseStamped, '/absolute_pose_odometry_OR_ekf', 10) # publishing in  odom frame
 
         # Publishers
-        self.Xref_pred_pub = self.create_publisher(Path, '/Xref_MPC_in_Odom_frame_from_predicted_trajectory', 10)
-        self.cmd_pub = self.create_publisher(TwistStamped, '/mpc/cmd_vel', 10)
-        self.error_pub = self.create_publisher(PointStamped, '/mpc/tracking_error', 10)
+        # self.Xref_pred_pub = self.create_publisher(Path, '/Xref_MPC_in_Odom_frame_from_predicted_trajectory', 10)
+        self.cmd_pub = self.create_publisher(TwistStamped, '/controller/cmd_vel', 10)
+        #self.error_pub = self.create_publisher(PointStamped, '/mpc/tracking_error', 10)
 
         
         # Timer Switcher
@@ -482,131 +482,322 @@ class Controller_for_UAV_Node(Node):
         else:
             self.get_logger().error(f"Invalid mode: {self.mode}")
 
-    def run_fuzzy_pid_logic(self):
+    # def run_fuzzy_pid_logic(self):
 
-        # --- Position Error ---
-        # dx, dy, dz = self.ugv_position_in_odom_frame - self.uav_position_in_odom_frame
-        dx, dy, dz = self.ugv_absolute_pose_in_odom_frame_EKF_estimation[:3] - self.uav_position_in_odom_frame
+    #     # --- Position Error ---
+    #     # dx, dy, dz = self.ugv_position_in_odom_frame - self.uav_position_in_odom_frame
+    #     dx, dy, dz = self.ugv_absolute_pose_in_odom_frame_EKF_estimation[:3] - self.uav_position_in_odom_frame
         
-        dyaw = self.ugv_yaw_in_odom_frame - self.uav_yaw_in_odom_frame
-        # Wrap dyaw to [-pi, pi] to avoid discontinuous control jumps
-        dyaw = ((dyaw + np.pi) % (2 * np.pi)) - np.pi
+    #     dyaw = self.ugv_yaw_in_odom_frame - self.uav_yaw_in_odom_frame
+    #     # Wrap dyaw to [-pi, pi] to avoid discontinuous control jumps
+    #     dyaw = ((dyaw + np.pi) % (2 * np.pi)) - np.pi
 
-        current_error = np.array([dx, dy, dz - 2.0, dyaw])
+    #     current_error = np.array([dx, dy, dz - 2.0, dyaw])
 
-        # --- Error norms for fuzzy scaling ---
-        e_pos_norm = np.linalg.norm(current_error[:3])
-        e_yaw_abs = abs(dyaw)
+    #     # --- Error norms for fuzzy scaling ---
+    #     e_pos_norm = np.linalg.norm(current_error[:3])
+    #     e_yaw_abs = abs(dyaw)
 
        
-        # --- Integral with anti-windup constraint ---
-        self.error_integral += current_error * self.mpc_dt
-        self.error_integral = np.clip(self.error_integral, -1.0, 1.0)
+    #     # --- Integral with anti-windup constraint ---
+    #     self.error_integral += current_error * self.mpc_dt
+    #     self.error_integral = np.clip(self.error_integral, -1.0, 1.0)
 
-        # --- Derivative calculation with First-Order Low-Pass Filter ---
+    #     # --- Derivative calculation with First-Order Low-Pass Filter ---
+    #     raw_derivative = (current_error - self.prev_error) / self.mpc_dt
+    #     self.prev_error = current_error
+
+    #     # Low-pass filter coefficient (alpha_lpf between 0 and 1)
+    #     # Lower values = smoother but introduces slight delay. 0.2-0.3 is optimal for 10-50Hz loops.
+    #     if not hasattr(self, 'filtered_derivative'):
+    #         self.filtered_derivative = np.zeros(4)
+        
+    #     alpha_lpf = 0.25 
+    #     self.filtered_derivative = alpha_lpf * raw_derivative + (1.0 - alpha_lpf) * self.filtered_derivative
+    #     de_norm = np.linalg.norm(self.filtered_derivative[:3])
+
+    #     # # --- Derivative without Low Pass Filter ---
+    #     # error_derivative = (current_error - self.prev_error) / self.mpc_dt
+    #     # self.prev_error = current_error
+
+    #     # de_norm = np.linalg.norm(error_derivative[:3])
+
+    #     # =====================================================
+    #     # FUZZY GAIN SCALING
+    #     # =====================================================
+
+    #     # Normalize error (tune these thresholds)
+    #     e_scale = 5.0       # meters where error considered "large"
+    #     de_scale = 3.0      # m/s rate considered "fast"
+
+    #     e_ratio = np.clip(e_pos_norm / e_scale, 0.0, 1.5)
+    #     de_ratio = np.clip(de_norm / de_scale, 0.0, 1.5)
+
+    #     # --- Fuzzy Rules (smooth nonlinear functions) ---
+
+    #     # Large error → high Kp
+    #     #kp_scale = 0.02 + 0.3 * e_ratio
+    #     #kp_scale = 0.03 + 0.3 * (1 - e_ratio) # combination 1
+    #     kp_scale = 0.2 + 0.3 * (1-e_ratio) # combination 2
+    #     alpha = 0.5
+    #     #kp_scale = alpha*kp_scale + (1-alpha)*kp_scale# smoothing with original gain, alpha is the smoothing factor between 0 and 1
+    #     # 1. Kp Scale: Small error -> lower gain (smooth); Large error -> higher gain (aggressive tracking)
+    #     # This keeps the drone aggressive when far away, but soft and quiet when hovering on target.
+    #     # kp_scale = 0.4 + 0.6 * e_ratio  # Ranges from 0.4 (close) to 1.0 (far away)
+
+
+
+
+    #     # Small error → increase Ki
+    #     #ki_scale = 0.07 + 1.0 * (1.0 - e_ratio); combination 1
+    #     ki_scale = 0.07 + 1.0 * (1.0 - e_ratio); #combination 2
+
+
+    #     # High derivative → increase Kd
+    #     #kd_scale = 2.5 + 1.0 * de_ratio #combination1
+    #     kd_scale = 2.5 + 1.0 * de_ratio# combination 2
+
+
+
+    #     # Apply scaling
+    #     kp_adapt = self.kp * kp_scale
+    #     ki_adapt = self.ki * ki_scale
+    #     kd_adapt = self.kd * kd_scale
+
+    #     # =====================================================
+    #     # PID Output
+    #     # =====================================================
+
+    #     # output = (
+    #     #     kp_adapt * current_error
+    #     #     + ki_adapt * self.error_integral
+    #     #     + kd_adapt * error_derivative
+    #     # )
+
+    #     output = (
+    #         kp_adapt * current_error
+    #         + ki_adapt * self.error_integral
+    #         + kd_adapt * self.filtered_derivative  # Uses the filtered derivative signal
+    #     )
+
+    #     vx_enu, vy_enu, vz_enu, wz_enu = output
+    #     yaw = self.uav_yaw_in_odom_frame
+
+    #     # ENU → FLU rotation (same as your working PID)
+    #     vx_flu =  vx_enu * np.cos(yaw) + vy_enu * np.sin(yaw)
+    #     vy_flu = -vx_enu * np.sin(yaw) + vy_enu * np.cos(yaw)
+    #     vz_flu =  vz_enu
+    #     wz_flu =  wz_enu
+
+    #     # Clip
+    #     vx = np.clip(vx_flu, -self.v_max, self.v_max)
+    #     vy = np.clip(vy_flu, -self.v_max, self.v_max)
+    #     vz = np.clip(vz_flu, -self.vz_max, self.vz_max)
+    #     wz = np.clip(wz_flu, -self.yawdot_max, self.yawdot_max)
+
+    #     if np.random.rand() < 0.1:
+    #         self.get_logger().info(
+    #             f"FuzzyPID | e_norm:{e_pos_norm:.2f} "
+    #             f"Kp_scale:{kp_scale:.2f} "
+    #             f"Cmd: Vx:{vx:.2f} Vy:{vy:.2f} Vz:{vz:.2f}"
+    #         )
+
+    #     self.publish_cmd([vx, vy, vz], wz)
+
+    def run_fuzzy_pid_logic(self):
+        """
+        Fuzzy-PID controller with anti-saturation protection and smooth gain scheduling
+        """
+        # --- Position Error Calculation ---
+        if self.ekf_active:
+            dx, dy, dz = self.ugv_absolute_pose_in_odom_frame_EKF_estimation[:3] - self.uav_position_in_odom_frame
+        else:
+            dx, dy, dz = self.ugv_position_in_odom_frame - self.uav_position_in_odom_frame
+        
+        dyaw = self.ugv_yaw_in_odom_frame - self.uav_yaw_in_odom_frame
+        dyaw = wrap_angle(dyaw)
+        
+        current_error = np.array([dx, dy, dz - 2.0, dyaw])
+        
+        e_pos_norm = np.linalg.norm(current_error[:3])
+        e_yaw_abs = abs(dyaw)
+        
+        # =====================================================
+        # ANTI-SATURATION VELOCITY LIMITS
+        # =====================================================
+        # Define strict limits to prevent saturation
+        fuzzy_v_max = 2.5      # Keep well below actuator limits
+        fuzzy_vz_max = 0.4
+        fuzzy_yaw_max = 0.2
+        
+        # =====================================================
+        # ADAPTIVE INTEGRAL WITH BACK-CALCULATION ANTI-WINDUP
+        # =====================================================
+        if not hasattr(self, 'fuzzy_error_integral'):
+            self.fuzzy_error_integral = np.zeros(4)
+        
+        # Calculate desired integral increment
+        integral_increment = current_error * self.mpc_dt
+        
+        # Only integrate position errors (not yaw) when within reasonable range
+        if e_pos_norm < 4.0:
+            self.fuzzy_error_integral += integral_increment
+        else:
+            # Aggressive decay when far
+            self.fuzzy_error_integral *= 0.9
+        
+        # Tighter anti-windup limits
+        self.fuzzy_error_integral = np.clip(self.fuzzy_error_integral, -0.5, 0.5)
+        
+        # =====================================================
+        # DERIVATIVE WITH ADAPTIVE FILTERING
+        # =====================================================
         raw_derivative = (current_error - self.prev_error) / self.mpc_dt
-        self.prev_error = current_error
-
-        # Low-pass filter coefficient (alpha_lpf between 0 and 1)
-        # Lower values = smoother but introduces slight delay. 0.2-0.3 is optimal for 10-50Hz loops.
+        self.prev_error = current_error.copy()
+        
         if not hasattr(self, 'filtered_derivative'):
             self.filtered_derivative = np.zeros(4)
         
-        alpha_lpf = 0.25 
+        # Adaptive filtering: more filtering when oscillating
+        de_norm = np.linalg.norm(raw_derivative[:3])
+        if de_norm > 3.0:  # High derivative = likely oscillating
+            alpha_lpf = 0.1  # Heavy filtering
+        elif de_norm > 1.0:
+            alpha_lpf = 0.2  # Moderate filtering
+        else:
+            alpha_lpf = 0.3  # Normal filtering
+        
         self.filtered_derivative = alpha_lpf * raw_derivative + (1.0 - alpha_lpf) * self.filtered_derivative
-        de_norm = np.linalg.norm(self.filtered_derivative[:3])
-
-        # # --- Derivative without Low Pass Filter ---
-        # error_derivative = (current_error - self.prev_error) / self.mpc_dt
-        # self.prev_error = current_error
-
-        # de_norm = np.linalg.norm(error_derivative[:3])
-
+        
         # =====================================================
-        # FUZZY GAIN SCALING
+        # SMOOTH GAIN SCHEDULING WITH SATURATION PREVENTION
         # =====================================================
-
-        # Normalize error (tune these thresholds)
-        e_scale = 5.0       # meters where error considered "large"
-        de_scale = 3.0      # m/s rate considered "fast"
-
-        e_ratio = np.clip(e_pos_norm / e_scale, 0.0, 1.5)
-        de_ratio = np.clip(de_norm / de_scale, 0.0, 1.5)
-
-        # --- Fuzzy Rules (smooth nonlinear functions) ---
-
-        # Large error → high Kp
-        #kp_scale = 0.02 + 0.3 * e_ratio
-        #kp_scale = 0.03 + 0.3 * (1 - e_ratio) # combination 1
-        kp_scale = 0.2 + 0.3 * (1-e_ratio) # combination 2
-        alpha = 0.5
-        #kp_scale = alpha*kp_scale + (1-alpha)*kp_scale# smoothing with original gain, alpha is the smoothing factor between 0 and 1
-        # 1. Kp Scale: Small error -> lower gain (smooth); Large error -> higher gain (aggressive tracking)
-        # This keeps the drone aggressive when far away, but soft and quiet when hovering on target.
-        # kp_scale = 0.4 + 0.6 * e_ratio  # Ranges from 0.4 (close) to 1.0 (far away)
-
-
-
-
-        # Small error → increase Ki
-        #ki_scale = 0.07 + 1.0 * (1.0 - e_ratio); combination 1
-        ki_scale = 0.07 + 1.0 * (1.0 - e_ratio); #combination 2
-
-
-        # High derivative → increase Kd
-        #kd_scale = 2.5 + 1.0 * de_ratio #combination1
-        kd_scale = 2.5 + 1.0 * de_ratio# combination 2
-
-
-
-        # Apply scaling
-        kp_adapt = self.kp * kp_scale
-        ki_adapt = self.ki * ki_scale
-        kd_adapt = self.kd * kd_scale
-
+        
+        # Base gains - moderate values
+        kp_base = np.array([0.6, 0.6, 0.4, 0.25])
+        ki_base = np.array([0.008, 0.008, 0.006, 0.004])
+        kd_base = np.array([0.06, 0.06, 0.03, 0.02])
+        
+        # Calculate maximum allowed Kp to prevent saturation
+        # v_max = kp_max * error_max, so kp_max = v_max / error_max
+        if e_pos_norm > 0.1:
+            kp_max_allowed = fuzzy_v_max / e_pos_norm
+        else:
+            kp_max_allowed = fuzzy_v_max / 0.1  # Prevent division by zero
+        
+        # Smooth gain calculation using sigmoid-like function
+        # This prevents abrupt gain changes that cause oscillation
+        
+        
+        # Normalized error (0 to 1 range)
+        e_norm = np.clip(e_pos_norm / 8.0, 0.0, 1.0)  # 8m as "very far"
+        
+        # Smooth Kp scaling: higher when far, lower when close
+        # Uses smooth transition instead of hard thresholds
+        kp_scale = 0.5 + 1.0 * e_norm  # Ranges from 0.5 to 1.5 smoothly
+        kp_scale = np.clip(kp_scale, 0.4, min(1.8, kp_max_allowed / np.max(kp_base[:2])))
+        
+        # Ki scaling: only active when close and not oscillating
+        closeness_factor = np.exp(-2.0 * e_pos_norm)  # 1 when close, 0 when far
+        oscillation_factor = np.exp(-de_norm / 2.0)   # 1 when smooth, 0 when oscillating
+        ki_scale = closeness_factor * oscillation_factor * 1.5
+        ki_scale = np.clip(ki_scale, 0.0, 1.5)
+        
+        # Kd scaling: higher when oscillating or moving fast
+        kd_scale = 1.0 + 0.5 * (1.0 - oscillation_factor)  # Increases when oscillating
+        kd_scale = np.clip(kd_scale, 0.8, 2.5)
+        
+        # Apply scaling with saturation check
+        kp_adapt = kp_base * kp_scale
+        
+        # Anti-saturation: reduce Kp if command would saturate
+        max_kp_effect = np.max(np.abs(kp_adapt[:2] * current_error[:2]))
+        if max_kp_effect > fuzzy_v_max:
+            # Scale down Kp to prevent saturation
+            kp_reduction = fuzzy_v_max / max_kp_effect * 0.9  # 90% of max to stay within limits
+            kp_adapt[:2] *= kp_reduction
+        
+        ki_adapt = ki_base * ki_scale
+        kd_adapt = kd_base * kd_scale
+        
         # =====================================================
-        # PID Output
+        # PID OUTPUT WITH BACK-CALCULATION
         # =====================================================
-
-        # output = (
-        #     kp_adapt * current_error
-        #     + ki_adapt * self.error_integral
-        #     + kd_adapt * error_derivative
-        # )
-
-        output = (
-            kp_adapt * current_error
-            + ki_adapt * self.error_integral
-            + kd_adapt * self.filtered_derivative  # Uses the filtered derivative signal
-        )
-
-        vx_enu, vy_enu, vz_enu, wz_enu = output
+        
+        # Calculate preliminary output
+        p_term = kp_adapt * current_error
+        i_term = ki_adapt * self.fuzzy_error_integral
+        d_term = kd_adapt * self.filtered_derivative
+        
+        output_prelim = p_term + i_term + d_term
+        
+        # Anti-windup: if output would saturate, reduce integral
+        vx_enu_prelim = output_prelim[0]
+        vy_enu_prelim = output_prelim[1]
+        
+        # Check for saturation
+        if abs(vx_enu_prelim) > fuzzy_v_max:
+            # Back-calculation: reduce integral to prevent windup
+            excess = vx_enu_prelim - np.sign(vx_enu_prelim) * fuzzy_v_max
+            self.fuzzy_error_integral[0] -= excess * self.mpc_dt * 0.5
+            output_prelim[0] = np.sign(vx_enu_prelim) * fuzzy_v_max
+        
+        if abs(vy_enu_prelim) > fuzzy_v_max:
+            excess = vy_enu_prelim - np.sign(vy_enu_prelim) * fuzzy_v_max
+            self.fuzzy_error_integral[1] -= excess * self.mpc_dt * 0.5
+            output_prelim[1] = np.sign(vy_enu_prelim) * fuzzy_v_max
+        
+        # Extract final commands
+        vx_enu, vy_enu, vz_enu, wz_enu = output_prelim
+        
+        # ENU → FLU rotation
         yaw = self.uav_yaw_in_odom_frame
-
-        # ENU → FLU rotation (same as your working PID)
         vx_flu =  vx_enu * np.cos(yaw) + vy_enu * np.sin(yaw)
         vy_flu = -vx_enu * np.sin(yaw) + vy_enu * np.cos(yaw)
         vz_flu =  vz_enu
         wz_flu =  wz_enu
-
-        # Clip
-        vx = np.clip(vx_flu, -self.v_max, self.v_max)
-        vy = np.clip(vy_flu, -self.v_max, self.v_max)
-        vz = np.clip(vz_flu, -self.vz_max, self.vz_max)
-        wz = np.clip(wz_flu, -self.yawdot_max, self.yawdot_max)
-
+        
+        # Final clipping (should rarely trigger now due to anti-saturation)
+        vx = np.clip(vx_flu, -fuzzy_v_max, fuzzy_v_max)
+        vy = np.clip(vy_flu, -fuzzy_v_max, fuzzy_v_max)
+        vz = np.clip(vz_flu, -fuzzy_vz_max, fuzzy_vz_max)
+        wz = np.clip(wz_flu, -fuzzy_yaw_max, fuzzy_yaw_max)
+        
+        # Oscillation detection and damping
+        if not hasattr(self, 'prev_vx_cmd'):
+            self.prev_vx_cmd = 0.0
+            self.prev_vy_cmd = 0.0
+        
+        # Detect sign changes (oscillation indicator)
+        vx_sign_change = (vx * self.prev_vx_cmd < 0) and (abs(vx) > 0.5) and (abs(self.prev_vx_cmd) > 0.5)
+        vy_sign_change = (vy * self.prev_vy_cmd < 0) and (abs(vy) > 0.5) and (abs(self.prev_vy_cmd) > 0.5)
+        
+        if vx_sign_change or vy_sign_change:
+            # Apply extra damping when oscillating detected
+            damping_factor = 0.7  # Reduce command by 30%
+            vx *= damping_factor
+            vy *= damping_factor
+            if np.random.rand() < 0.3:
+                self.get_logger().warn(f"Oscillation detected! Damping applied. Vx:{vx:.2f} Vy:{vy:.2f}")
+        
+        self.prev_vx_cmd = vx
+        self.prev_vy_cmd = vy
+        
+        # Debug logging
         if np.random.rand() < 0.1:
             self.get_logger().info(
-                f"FuzzyPID | e_norm:{e_pos_norm:.2f} "
-                f"Kp_scale:{kp_scale:.2f} "
-                f"Cmd: Vx:{vx:.2f} Vy:{vy:.2f} Vz:{vz:.2f}"
+                f"FuzzyPID | Err:{e_pos_norm:.2f}m | "
+                f"Kp:[{kp_adapt[0]:.2f},{kp_adapt[1]:.2f}] "
+                f"Ki_s:{ki_scale:.2f} Kd_s:{kd_scale:.2f} | "
+                f"Cmd:[{vx:.2f},{vy:.2f},{vz:.2f}] | "
+                f"Sat:{'YES' if max(abs(vx_enu_prelim),abs(vy_enu_prelim))>fuzzy_v_max*0.95 else 'NO'}"
             )
-
+        
         self.publish_cmd([vx, vy, vz], wz)
+  
 
     def run_pid_logic(self):
         
-
         e_pos=self.ugv_position_in_odom_frame-self.uav_position_in_odom_frame
         
         """Simple PID controller for UAV tracking."""
@@ -1005,49 +1196,49 @@ class Controller_for_UAV_Node(Node):
         yaw = np.arctan2(siny, cosy)
         return roll, pitch, yaw
     
-    def debug_nmpc_status(self, x0, U, Xref):
-        """
-        Minimal NMPC Debugger to identify coordinate frame mismatches.
-        x0: Current state [x, y, z, r, p, yaw] (Relative)
-        U:  Control array [N, 4]
-        Xref: Reference trajectory [N, 6]
-        """
-        print("\n" + "!"*30 + " NMPC COORDINATE DEBUG " + "!"*30)
+    # def debug_nmpc_status(self, x0, U, Xref):
+    #     """
+    #     Minimal NMPC Debugger to identify coordinate frame mismatches.
+    #     x0: Current state [x, y, z, r, p, yaw] (Relative)
+    #     U:  Control array [N, 4]
+    #     Xref: Reference trajectory [N, 6]
+    #     """
+    #     print("\n" + "!"*30 + " NMPC COORDINATE DEBUG " + "!"*30)
         
-        # 1. STATE VS REFERENCE (Initial Error)
-        # This tells you if the NMPC knows where it is relative to the target
-        print(f"CURRENT RELATIVE STATE (x0):  X:{x0[0]:.2f}, Y:{x0[1]:.2f}, Z:{x0[2]:.2f}, Yaw:{np.degrees(x0[5]):.1f}°")
-        print(f"FIRST TARGET POINT (Xref[0]): X:{Xref[0,0]:.2f}, Y:{Xref[0,1]:.2f}, Z:{Xref[0,2]:.2f}, Yaw:{np.degrees(Xref[0,5]):.1f}°")
+    #     # 1. STATE VS REFERENCE (Initial Error)
+    #     # This tells you if the NMPC knows where it is relative to the target
+    #     print(f"CURRENT RELATIVE STATE (x0):  X:{x0[0]:.2f}, Y:{x0[1]:.2f}, Z:{x0[2]:.2f}, Yaw:{np.degrees(x0[5]):.1f}°")
+    #     print(f"FIRST TARGET POINT (Xref[0]): X:{Xref[0,0]:.2f}, Y:{Xref[0,1]:.2f}, Z:{Xref[0,2]:.2f}, Yaw:{np.degrees(Xref[0,5]):.1f}°")
         
-        pos_error = Xref[0, 0:3] - x0[0:3]
-        print(f"IMMEDIATE ERROR VECTOR:      dX:{pos_error[0]:.2f}, dY:{pos_error[1]:.2f}, dZ:{pos_error[2]:.2f}")
+    #     pos_error = Xref[0, 0:3] - x0[0:3]
+    #     print(f"IMMEDIATE ERROR VECTOR:      dX:{pos_error[0]:.2f}, dY:{pos_error[1]:.2f}, dZ:{pos_error[2]:.2f}")
 
-        # 2. TRAJECTORY TREND
-        # Check if the predicted trajectory is moving away or toward the drone
-        if self.N > 1:
-            traj_move = Xref[-1, 0:3] - Xref[0, 0:3]
-            print(f"TRAJECTORY TREND (N steps):  dX:{traj_move[0]:.2f}, dY:{traj_move[1]:.2f}, dZ:{traj_move[2]:.2f}")
+    #     # 2. TRAJECTORY TREND
+    #     # Check if the predicted trajectory is moving away or toward the drone
+    #     if self.N > 1:
+    #         traj_move = Xref[-1, 0:3] - Xref[0, 0:3]
+    #         print(f"TRAJECTORY TREND (N steps):  dX:{traj_move[0]:.2f}, dY:{traj_move[1]:.2f}, dZ:{traj_move[2]:.2f}")
 
-        # 3. CONTROL ALIGNMENT CHECK
-        # This is the "Truth Test": if dX is positive, VX should be positive.
-        u0 = U[0, :]
-        print("-" * 20)
-        print(f"MPC COMMAND (u0):            VX:{u0[0]:.3f}, VY:{u0[1]:.3f}, VZ:{u0[2]:.3f}, Wz:{u0[3]:.3f}")
+    #     # 3. CONTROL ALIGNMENT CHECK
+    #     # This is the "Truth Test": if dX is positive, VX should be positive.
+    #     u0 = U[0, :]
+    #     print("-" * 20)
+    #     print(f"MPC COMMAND (u0):            VX:{u0[0]:.3f}, VY:{u0[1]:.3f}, VZ:{u0[2]:.3f}, Wz:{u0[3]:.3f}")
         
-        # LOGIC CHECK: Does the command reduce the error?
-        # If dX > 0 (Target ahead), VX should be > 0.
-        # If dX < 0 (Target behind), VX should be < 0.
-        vx_correct = (pos_error[0] > 0 and u0[0] > 0) or (pos_error[0] < 0 and u0[0] < 0)
-        vy_correct = (pos_error[1] > 0 and u0[1] > 0) or (pos_error[1] < 0 and u0[1] < 0)
+    #     # LOGIC CHECK: Does the command reduce the error?
+    #     # If dX > 0 (Target ahead), VX should be > 0.
+    #     # If dX < 0 (Target behind), VX should be < 0.
+    #     vx_correct = (pos_error[0] > 0 and u0[0] > 0) or (pos_error[0] < 0 and u0[0] < 0)
+    #     vy_correct = (pos_error[1] > 0 and u0[1] > 0) or (pos_error[1] < 0 and u0[1] < 0)
         
-        print(f"DIRECTIONAL LOGIC CHECK:     VX: {'✅ CORRECT' if vx_correct else '❌ REVERSED'}")
-        print(f"                             VY: {'✅ CORRECT' if vy_correct else '❌ REVERSED'}")
+    #     print(f"DIRECTIONAL LOGIC CHECK:     VX: {'✅ CORRECT' if vx_correct else '❌ REVERSED'}")
+    #     print(f"                             VY: {'✅ CORRECT' if vy_correct else '❌ REVERSED'}")
         
-        # 4. VELOCITY CONTEXT
-        if hasattr(self, 'v_u'):
-            print(f"UAV CURR VEL (Body):         VX:{self.v_u[0]:.2f}, VY:{self.v_u[1]:.2f}")
+    #     # 4. VELOCITY CONTEXT
+    #     if hasattr(self, 'v_u'):
+    #         print(f"UAV CURR VEL (Body):         VX:{self.v_u[0]:.2f}, VY:{self.v_u[1]:.2f}")
 
-        print("!"*83 + "\n")
+    #     print("!"*83 + "\n")
 
 # (Include other callbacks as provided in original script)
 
