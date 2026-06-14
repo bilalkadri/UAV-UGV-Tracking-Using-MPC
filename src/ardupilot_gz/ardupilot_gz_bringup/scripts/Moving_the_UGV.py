@@ -20,11 +20,11 @@ class JackalMover(Node):
         self.started_once = False
         self.state = "IDLE"
         self.elapsed_time = 0.0
-        self.dt = 0.05  # 20Hz
+        self.dt = 0.01    
         
         # --- Linear Mode Params ---
         self.dist = 10.0
-        self.v_fwd, self.v_bwd = 0.5, -0.5
+        self.v_fwd, self.v_bwd = 0.3, -0.3
         self.pause_dur = 1.0
         self.t_fwd = self.dist / abs(self.v_fwd)
         self.t_bwd = self.dist / abs(self.v_bwd)

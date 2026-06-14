@@ -39,46 +39,6 @@ err_y_list = []
 ERR_LOCK = threading.Lock()
 
 
-
-# ============================================================
-# ================= JACKAL & UAV FOLLOW ======================
-# ============================================================
-
-def move_jackal_forward(node, duration=5.0, speed=0.4):
-    """UGV moves in a circular trajectory continuously and independently."""
-    global ugv_traj
-
-    radius = 3.0
-    omega = 0.02
-    linear_speed = radius * omega
-
-    jackal_pub = node.create_publisher(
-        TwistStamped, '/jackal/jackal_velocity_controller/cmd_vel', 10
-    )
-    msg = TwistStamped()
-    msg.header = Header()
-
-    # We'll publish angular z and linear x to create circular motion (differential controller on Jackal)
-    msg.twist.linear.x = linear_speed
-    msg.twist.angular.z = omega
-
-    x, y = radius, 0.0  # initial position on circle
-    theta = 0.0
-    dt = 0.1
-
-    # Jackal keeps moving forever (independent of TRACK_FLAG)
-    while rclpy.ok():
-        msg.header.stamp = node.get_clock().now().to_msg()
-        jackal_pub.publish(msg)
-
-        theta += omega * dt
-        x = radius * math.cos(theta)
-        y = radius * math.sin(theta)
-        ugv_traj.append((x, y))
-
-        rclpy.spin_once(node, timeout_sec=0.01)
-        time.sleep(dt)
-
 # ============================================================
 # ============ CONTROLLER VELOCITY SUBSCRIBER NODE ==================
 # ============================================================
@@ -104,20 +64,20 @@ class ControllerVelocitySubscriber(Node):
         self.get_logger().info("ControllerVelocitySubscriber Node Started — listening on /controller/cmd_vel")
 
     # ----------------------------------------------------------
-    #  When MPC publishes velocities, send them directly to UAV
+    #  When Controller publishes velocities, send them directly to UAV
     # ----------------------------------------------------------
     def cmd_callback(self, msg):
         
-        scale = 0.5
+        scale = 0.5  # Adjust this scale factor as needed to tune the responsiveness of the drone to the controller's output
         #scale = 0.09
 
         vx_flu = msg.twist.linear.x*scale
         vy_flu = msg.twist.linear.y*scale
-        # vz_flu = msg.twist.linear.z
-        vz_flu = 0
+        vz_flu = msg.twist.linear.z*scale
+        # vz_flu = 0
         yaw_rate_flu = msg.twist.angular.z
 
-        # The /mpc/cmd_vel produced by the MPC Node is in the FLU frame,
+        # The /controller/cmd_vel produced by the MPC Node is in the FLU frame,
         # we have to convert FLU to MAV_FRAME_BODY_NED (This is actually Forward-Right-Down) 
         
     
@@ -134,7 +94,7 @@ class ControllerVelocitySubscriber(Node):
         # Change the constant to: MAV_FRAME_BODY_NED
        
 
-        # Adjustment: Since I am receiving  /mpc/cmd_vel as FLU (Forward-Left-Up), I just need to 
+        # Adjustment: Since I am receiving  /controller/cmd_vel as FLU (Forward-Left-Up), I just need to 
         # flip Y and Z:
         # vx_mav = vx_flu (Forward)
         # vy_mav = -vy_flu (Left $\rightarrow$ Right)
@@ -149,7 +109,7 @@ class ControllerVelocitySubscriber(Node):
         try:
             send_velocity(self.master, vx_BODY_NED_MAVLINK, vy_BODY_NED_MAVLINK, vz_BODY_NED_MAVLINK, yaw_BODY_NED_MAVLINK, self.start_time)
         except Exception as e:
-            self.get_logger().error(f"Failed sending MPC velocity: {e}")
+            self.get_logger().error(f"Failed sending controller velocity: {e}")
 
 
 # ============================================================
@@ -263,7 +223,7 @@ def wait_for_landing(master):
         time.sleep(0.5)
     arm_and_wait(master, False)
 
-# Move the UGV in a rectangle
+
 
 
 # ============================================================
@@ -304,8 +264,8 @@ def main():
     # START CONTROLLER SUBSCRIBER ONLY NOW — AFTER TAKEOFF IS COMPLETE
     # -----------------------------------------------------------
     start_time = time.time()
-    mpc_subscriber = ControllerVelocitySubscriber(master, start_time)
-    executor.add_node(mpc_subscriber)
+    controller_subscriber = ControllerVelocitySubscriber(master, start_time)
+    executor.add_node(controller_subscriber)
 
     #node.get_logger().info("Controller subscriber activated — ready to receive /controller/cmd_vel")
 
@@ -338,14 +298,14 @@ def main():
 
         
     try:
-        executor.remove_node(mpc_subscriber)
+        executor.remove_node(controller_subscriber)
     except Exception:
         pass
 
 
 
     try:
-        mpc_subscriber.destroy_node()
+        controller_subscriber.destroy_node()
     except Exception:
         pass
 

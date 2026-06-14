@@ -202,7 +202,7 @@ class AbsolutePoseEKF(Node):
 
         self.pub_absolute_only_ekf = self.create_publisher(PoseStamped, '/absolute_pose_ekf', 10) # publishing in  odom frame
 
-        self.pred_pub = self.create_publisher(Path, '/predicted_trajectory', 10)
+        # self.pred_pub = self.create_publisher(Path, '/predicted_trajectory', 10)
 
         self.pub_update_flag = self.create_publisher(Bool, '/ekf/update_applied', 10)
 
@@ -573,19 +573,19 @@ class AbsolutePoseEKF(Node):
         # print(f"[ODOM] Angles: yaw={np.degrees(yaw_to_ugv):.1f}°, pitch={np.degrees(pitch_to_ugv):.1f}°")
         # 1️⃣ Predict UGV trajectory in UAV frame
         # THis will update the 'self.trajectory' variable
-        self.predict_ugv_trajectory_uav_frame_using_Odometry(
-        # self.x is UGV position relative to UAV (in UAV body frame)
-        # self.x[3:6, 0] = UGV orientation relative to UAV (roll, pitch, yaw)
-        self.ugv_pos_and_orient_in_UAV_frame.flatten(), # self.x is UGV position relative to UAV (in UAV body frame)
-        self.uav_position_in_odom_frame, 
-        self.uav_yaw_in_odom_frame,
-        self.ugv_lin_vel_wrt_jackal_odom_frame_expressed_in_jackal_base_link, 
-        self.ugv_ang_vel_wrt_jackal_odom_frame_expressed_in_jackal_base_link,  
-        self.uav_lin_vel_wrt_odom_frame_expressed_in_base_link, 
-        self.uav_ang_vel_wrt_odom_frame_expressed_in_base_link,
-        self.pred_N, 
-        self.dt
-        )
+        # self.predict_ugv_trajectory_uav_frame_using_Odometry(
+        # # self.x is UGV position relative to UAV (in UAV body frame)
+        # # self.x[3:6, 0] = UGV orientation relative to UAV (roll, pitch, yaw)
+        # self.ugv_pos_and_orient_in_UAV_frame.flatten(), # self.x is UGV position relative to UAV (in UAV body frame)
+        # self.uav_position_in_odom_frame, 
+        # self.uav_yaw_in_odom_frame,
+        # self.ugv_lin_vel_wrt_jackal_odom_frame_expressed_in_jackal_base_link, 
+        # self.ugv_ang_vel_wrt_jackal_odom_frame_expressed_in_jackal_base_link,  
+        # self.uav_lin_vel_wrt_odom_frame_expressed_in_base_link, 
+        # self.uav_ang_vel_wrt_odom_frame_expressed_in_base_link,
+        # self.pred_N, 
+        # self.dt
+        # )
             
  
     def run_ekf_mode(self):
@@ -833,7 +833,7 @@ class AbsolutePoseEKF(Node):
 
                 # Check if measurement is valid (not an outlier)
                 if maha_value <= self.mahalanobis_threshold:
-                    print(f"[EKF UPDATE] Mahalanobis distance: {maha_value:.3f}, Threshold: {self.mahalanobis_threshold}")
+                    # print(f"[EKF UPDATE] Mahalanobis distance: {maha_value:.3f}, Threshold: {self.mahalanobis_threshold}")
                     # Compute Kalman gain K = P * S^(-1)
                     K = self.P @ Sinv
                     # Update state estimate: x = x + K * y
@@ -930,37 +930,20 @@ class AbsolutePoseEKF(Node):
         self.last_ekf_pose = msg
         self.publish_bumpless_pose()
 
-        # --- Trajectory prediction for EKF---
-        # ============= ⭐⭐ CRITICAL FIX: Trajectory prediction ⭐⭐ =============
-        # Predict UAV trajectory in WORLD frame (no this is wrong)
-        # ⚠️  WARNING:This is incorrect
-        # UAV trajectory prediction mjust be in UAV frame not in world frame
-        # The predicted UGV trajectory must be in the UAV's body frame for the 
-        # NMPC to work correctly, since the NMPC controller needs the relative position error 
-        # to compute tracking control actions.
-        
-        # self.predict_ugv_trajectory_uav_frame_using_EKF(
-        #     # self.x is UGV position relative to UAV (in UAV body frame)
-        #     # self.x[3:6, 0] = UGV orientation relative to UAV (roll, pitch, yaw)
-        #     self.ugv_pos_and_orient_in_UAV_frame.flatten(), # self.x is UGV position relative to UAV (in UAV body frame)
-        #     self.uav_position_in_odom_frame, self.uav_yaw_in_odom_frame,
-        #     self.ugv_lin_vel_in_jackal_odom_frame, self.ugv_ang_vel_in_jackal_odom_frame,
-        #     self.uav_lin_vel_in_odom_frame, self.uav_ang_vel_in_odom_frame,
-        #     N=self.pred_N, dt=self.dt
+ 
+        # self.predict_ugv_trajectory_uav_frame_using_Odometry(
+        # # self.x is UGV position relative to UAV (in UAV body frame)
+        # # self.x[3:6, 0] = UGV orientation relative to UAV (roll, pitch, yaw)
+        # self.ugv_pos_and_orient_in_UAV_frame.flatten(), # self.x is UGV position relative to UAV (in UAV body frame)
+        # self.uav_position_in_odom_frame, 
+        # self.uav_yaw_in_odom_frame,
+        # self.ugv_lin_vel_wrt_jackal_odom_frame_expressed_in_jackal_base_link, 
+        # self.ugv_ang_vel_wrt_jackal_odom_frame_expressed_in_jackal_base_link,  
+        # self.uav_lin_vel_wrt_odom_frame_expressed_in_base_link, 
+        # self.uav_ang_vel_wrt_odom_frame_expressed_in_base_link,
+        # self.pred_N, 
+        # self.dt
         # )
-        self.predict_ugv_trajectory_uav_frame_using_Odometry(
-        # self.x is UGV position relative to UAV (in UAV body frame)
-        # self.x[3:6, 0] = UGV orientation relative to UAV (roll, pitch, yaw)
-        self.ugv_pos_and_orient_in_UAV_frame.flatten(), # self.x is UGV position relative to UAV (in UAV body frame)
-        self.uav_position_in_odom_frame, 
-        self.uav_yaw_in_odom_frame,
-        self.ugv_lin_vel_wrt_jackal_odom_frame_expressed_in_jackal_base_link, 
-        self.ugv_ang_vel_wrt_jackal_odom_frame_expressed_in_jackal_base_link,  
-        self.uav_lin_vel_wrt_odom_frame_expressed_in_base_link, 
-        self.uav_ang_vel_wrt_odom_frame_expressed_in_base_link,
-        self.pred_N, 
-        self.dt
-        )
 
    
     def publish_bumpless_pose(self):
@@ -1057,296 +1040,296 @@ class AbsolutePoseEKF(Node):
         self.pub_absolute_pose_blended_odometry_OR_ekf.publish(blended_pose) # publish on the topic /absolute_pose_odometry_OR_ekf in /odom frame, this will be used in the Fuzzy LOgic Controller
    
       
-    def predict_ugv_trajectory_uav_frame_using_Odometry(
-            self,
-            state_vec,
-            uav_pos,
-            uav_yaw,
-            v_g,
-            w_g,
-            v_u,     
-            w_u,     
+    # def predict_ugv_trajectory_uav_frame_using_Odometry(
+    #         self,
+    #         state_vec,
+    #         uav_pos,
+    #         uav_yaw,
+    #         v_g,
+    #         w_g,
+    #         v_u,     
+    #         w_u,     
                      
-            N,           # Prediction horizon length (number of steps)
-            dt=0.02):    # Discrete-time step (seconds)
-        """
-        Predict desired UAV trajectory for NMPC to track UGV.
-        All positions are expressed in the UAV body frame (no world-frame conversion).
+    #         N,           # Prediction horizon length (number of steps)
+    #         dt=0.02):    # Discrete-time step (seconds)
+    #     """
+    #     Predict desired UAV trajectory for NMPC to track UGV.
+    #     All positions are expressed in the UAV body frame (no world-frame conversion).
 
-        Parameters:
-            state_vec : np.array
-                Current relative state of UGV w.r.t UAV [x, y, z, roll, pitch, yaw].
-            uav_pos : np.array
-                UAV linear velocity in odom frame [vx, vy].
-            uav_yaw : float
-                UAV yaw rate (rad/s).
-            v_g, w_g : np.array / float
-                UGV linear and angular velocities in jacakl/odom frame. ()
-            v_u, w_u : np.array / float
-                UAV linear and angular velocities in odom frame.
-            N : int
-                Prediction horizon.
-            dt : float
-                Time step (s).
+    #     Parameters:
+    #         state_vec : np.array
+    #             Current relative state of UGV w.r.t UAV [x, y, z, roll, pitch, yaw].
+    #         uav_pos : np.array
+    #             UAV linear velocity in odom frame [vx, vy].
+    #         uav_yaw : float
+    #             UAV yaw rate (rad/s).
+    #         v_g, w_g : np.array / float
+    #             UGV linear and angular velocities in jacakl/odom frame. ()
+    #         v_u, w_u : np.array / float
+    #             UAV linear and angular velocities in odom frame.
+    #         N : int
+    #             Prediction horizon.
+    #         dt : float
+    #             Time step (s).
 
-        Returns:
-            uav_trajectory : list of np.array
-                List of UAV positions [x, y, z] in UAV frame."""
+    #     Returns:
+    #         uav_trajectory : list of np.array
+    #             List of UAV positions [x, y, z] in UAV frame."""
         
-                # 1️⃣ Predict UGV trajectory in UAV frame
-        # # THis will update the 'self.trajectory' variable
-        # self.predict_ugv_trajectory_uav_frame_using_Odometry(
-        # self.ugv_pos_and_orient_in_UAV_frame.flatten(), # self.x is UGV position relative to UAV (in UAV body frame)
-        # self.uav_position_in_odom_frame, self.uav_yaw,
-        # self.ugv_lin_vel_in_jackal_odom_frame, self.ugv_ang_vel_in_jackal_odom_frame,  
-        # self.uav_lin_vel_in_odom_frame, self.uav_ang_vel_in_odom_frame,
-        # self.pred_N, self.dt
-        # )
-        #------------------------------------------------------------------------------------
-        #             Trajectrory of UGV generated by UGV Odometry
-        #-----------------------------------------------------------------------------------
-        # the specific code that generates the trajectory from odometry data
-        # the desired UAV trajectory should be in the UAV frame for the NMPC to function correctly
-        # For the NMPC to work correctly, you should feed the UGV trajectory 
-        # (expressed in the UAV frame) directly to the NMPC as the reference.
-        # You do NOT convert the predicted UGV trajectory into a UAV trajectory.
+    #             # 1️⃣ Predict UGV trajectory in UAV frame
+    #     # # THis will update the 'self.trajectory' variable
+    #     # self.predict_ugv_trajectory_uav_frame_using_Odometry(
+    #     # self.ugv_pos_and_orient_in_UAV_frame.flatten(), # self.x is UGV position relative to UAV (in UAV body frame)
+    #     # self.uav_position_in_odom_frame, self.uav_yaw,
+    #     # self.ugv_lin_vel_in_jackal_odom_frame, self.ugv_ang_vel_in_jackal_odom_frame,  
+    #     # self.uav_lin_vel_in_odom_frame, self.uav_ang_vel_in_odom_frame,
+    #     # self.pred_N, self.dt
+    #     # )
+    #     #------------------------------------------------------------------------------------
+    #     #             Trajectrory of UGV generated by UGV Odometry
+    #     #-----------------------------------------------------------------------------------
+    #     # the specific code that generates the trajectory from odometry data
+    #     # the desired UAV trajectory should be in the UAV frame for the NMPC to function correctly
+    #     # For the NMPC to work correctly, you should feed the UGV trajectory 
+    #     # (expressed in the UAV frame) directly to the NMPC as the reference.
+    #     # You do NOT convert the predicted UGV trajectory into a UAV trajectory.
 
 
-        # ------------------------------------------------------------
-        # Extract the current relative position of the UGV w.r.t UAV
-        # from the EKF/odometry state vector.
-        #
-        # state_vec[0:3] represents:
-        #   x_rel : UGV x-position relative to UAV (UAV frame)
-        #   y_rel : UGV y-position relative to UAV (UAV frame)
-        #   z_rel : UGV z-position relative to UAV (UAV frame)
-        # ------------------------------------------------------------
+    #     # ------------------------------------------------------------
+    #     # Extract the current relative position of the UGV w.r.t UAV
+    #     # from the EKF/odometry state vector.
+    #     #
+    #     # state_vec[0:3] represents:
+    #     #   x_rel : UGV x-position relative to UAV (UAV frame)
+    #     #   y_rel : UGV y-position relative to UAV (UAV frame)
+    #     #   z_rel : UGV z-position relative to UAV (UAV frame)
+    #     # ------------------------------------------------------------
         
-        x_rel=self.ugv_pos_and_orient_in_UAV_frame[0,0]
-        y_rel=self.ugv_pos_and_orient_in_UAV_frame[1,0]
-        z_rel=self.ugv_pos_and_orient_in_UAV_frame[2,0]
+    #     x_rel=self.ugv_pos_and_orient_in_UAV_frame[0,0]
+    #     y_rel=self.ugv_pos_and_orient_in_UAV_frame[1,0]
+    #     z_rel=self.ugv_pos_and_orient_in_UAV_frame[2,0]
 
-        roll=self.ugv_pos_and_orient_in_UAV_frame[3,0]
-        pitch=self.ugv_pos_and_orient_in_UAV_frame[4,0]
-        yaw=self.ugv_pos_and_orient_in_UAV_frame[5,0]
-        qx, qy, qz, qw = self.rpy_to_quat(roll, pitch, yaw) 
+    #     roll=self.ugv_pos_and_orient_in_UAV_frame[3,0]
+    #     pitch=self.ugv_pos_and_orient_in_UAV_frame[4,0]
+    #     yaw=self.ugv_pos_and_orient_in_UAV_frame[5,0]
+    #     qx, qy, qz, qw = self.rpy_to_quat(roll, pitch, yaw) 
 
-        # ------------------------------------------------------------
-        # Form a 2D relative position vector for planar motion.
-        # This vector represents where the UGV currently appears
-        # from the UAV’s body frame.
-        # ------------------------------------------------------------
-        p_rel = np.array([x_rel, y_rel], dtype=float)
+    #     # ------------------------------------------------------------
+    #     # Form a 2D relative position vector for planar motion.
+    #     # This vector represents where the UGV currently appears
+    #     # from the UAV’s body frame.
+    #     # ------------------------------------------------------------
+    #     p_rel = np.array([x_rel, y_rel], dtype=float)
 
-        # ------------------------------------------------------------
-        # Initialize a list to store the predicted relative positions
-        # of the UGV over the prediction horizon.
-        # Each element will be a 3D point [x_rel, y_rel, z_rel].
-        # ------------------------------------------------------------
-        self.trajectory = []
+    #     # ------------------------------------------------------------
+    #     # Initialize a list to store the predicted relative positions
+    #     # of the UGV over the prediction horizon.
+    #     # Each element will be a 3D point [x_rel, y_rel, z_rel].
+    #     # ------------------------------------------------------------
+    #     self.trajectory = []
 
-        # 2️⃣ Define desired offset from UGV (in UAV frame)
-        # Better Strategy: If you find you keep losing the marker, try an offset of [-1.0, 0.0, -2.0].
-        #  Being 1 meter behind gives the camera a better "look ahead" angle at the UGV.
-        desired_offset = np.array([0.0, 0.0, 0.0])  # negative x is "behind" in UAV frame
+    #     # 2️⃣ Define desired offset from UGV (in UAV frame)
+    #     # Better Strategy: If you find you keep losing the marker, try an offset of [-1.0, 0.0, -2.0].
+    #     #  Being 1 meter behind gives the camera a better "look ahead" angle at the UGV.
+    #     desired_offset = np.array([0.0, 0.0, 0.0])  # negative x is "behind" in UAV frame
 
-        # 1. Get the Jackal's velocities (already in /jackal/odom which is ENU)
-        v_gx_world = self.ugv_lin_vel_wrt_jackal_odom_frame_expressed_in_jackal_base_link[0]
-        v_gy_world = self.ugv_lin_vel_wrt_jackal_odom_frame_expressed_in_jackal_base_link[1]
+    #     # 1. Get the Jackal's velocities (already in /jackal/odom which is ENU)
+    #     v_gx_world = self.ugv_lin_vel_wrt_jackal_odom_frame_expressed_in_jackal_base_link[0]
+    #     v_gy_world = self.ugv_lin_vel_wrt_jackal_odom_frame_expressed_in_jackal_base_link[1]
 
-        # 2. Get the UAV's current yaw (this must be its yaw in the 'odom' frame)
-        uav_yaw = self.uav_yaw_in_odom_frame 
-        cos_y = np.cos(uav_yaw)
-        sin_y = np.sin(uav_yaw)
+    #     # 2. Get the UAV's current yaw (this must be its yaw in the 'odom' frame)
+    #     uav_yaw = self.uav_yaw_in_odom_frame 
+    #     cos_y = np.cos(uav_yaw)
+    #     sin_y = np.sin(uav_yaw)
 
-        # 3. Rotate World Velocity into UAV Body Frame (FLU)
-        # This converts ENU (North/East) to FLU (Front/Left)
-        v_gx_flu =  v_gx_world * cos_y + v_gy_world * sin_y
-        v_gy_flu = -v_gx_world * sin_y + v_gy_world * cos_y
+    #     # 3. Rotate World Velocity into UAV Body Frame (FLU)
+    #     # This converts ENU (North/East) to FLU (Front/Left)
+    #     v_gx_flu =  v_gx_world * cos_y + v_gy_world * sin_y
+    #     v_gy_flu = -v_gx_world * sin_y + v_gy_world * cos_y
 
-        # v_g is now ready for your dx/dy calculation
-        v_g = np.array([v_gx_flu, v_gy_flu])
+    #     # v_g is now ready for your dx/dy calculation
+    #     v_g = np.array([v_gx_flu, v_gy_flu])
 
-        # 4. Angular velocity (Yaw rate)
-        # Since both frames share the same Z-up axis, the scalar yaw rate 
-        # is the same in both frames.
-        w_g = self.ugv_ang_vel_wrt_jackal_odom_frame_expressed_in_jackal_base_link[2]
+    #     # 4. Angular velocity (Yaw rate)
+    #     # Since both frames share the same Z-up axis, the scalar yaw rate 
+    #     # is the same in both frames.
+    #     w_g = self.ugv_ang_vel_wrt_jackal_odom_frame_expressed_in_jackal_base_link[2]
 
-        v_ux=self.uav_lin_vel_wrt_odom_frame_expressed_in_base_link[0]
-        v_uy=self.uav_lin_vel_wrt_odom_frame_expressed_in_base_link[1]
-        # This turns the [x, y, z] vector into a single float (yaw rate)
-        scalar_wu = float(self.uav_ang_vel_wrt_odom_frame_expressed_in_base_link[2])
-        for i in range(N):
+    #     v_ux=self.uav_lin_vel_wrt_odom_frame_expressed_in_base_link[0]
+    #     v_uy=self.uav_lin_vel_wrt_odom_frame_expressed_in_base_link[1]
+    #     # This turns the [x, y, z] vector into a single float (yaw rate)
+    #     scalar_wu = float(self.uav_ang_vel_wrt_odom_frame_expressed_in_base_link[2])
+    #     for i in range(N):
            
             
-            # Force p_rel elements and w_u to be pure scalars
-            curr_px = float(p_rel[0])
-            curr_py = float(p_rel[1])
+    #         # Force p_rel elements and w_u to be pure scalars
+    #         curr_px = float(p_rel[0])
+    #         curr_py = float(p_rel[1])
             
 
-            # 1. Predict next UGV relative position (Kinematic Model)
-            dx = v_gx_flu - v_ux + (scalar_wu * curr_py)
-            dy = v_gy_flu - v_uy - (scalar_wu * curr_px)
+    #         # 1. Predict next UGV relative position (Kinematic Model)
+    #         dx = v_gx_flu - v_ux + (scalar_wu * curr_py)
+    #         dy = v_gy_flu - v_uy - (scalar_wu * curr_px)
                     
             
-            # Now these additions will work because dx and dy are single floats
-            p_rel[0] += dx * dt
-            p_rel[1] += dy * dt
+    #         # Now these additions will work because dx and dy are single floats
+    #         p_rel[0] += dx * dt
+    #         p_rel[1] += dy * dt
 
-            # 2. Calculate desired UAV position
-            ugv_curr_rel = np.array([p_rel[0], p_rel[1], z_rel], dtype=float)
-            desired_uav_pos = ugv_curr_rel + desired_offset
+    #         # 2. Calculate desired UAV position
+    #         ugv_curr_rel = np.array([p_rel[0], p_rel[1], z_rel], dtype=float)
+    #         desired_uav_pos = ugv_curr_rel + desired_offset
             
-            self.trajectory.append(desired_uav_pos)
+    #         self.trajectory.append(desired_uav_pos)
    
         
 
-        # ------------------------------------------------------------
-        # Publish the predicted UGV trajectory expressed entirely
-        # in the UAV body frame.
-        # This trajectory is used directly by the NMPC.
-        # ------------------------------------------------------------
-        # Publish predicted path
-        path_msg = Path()
-        path_msg.header.stamp = self.get_clock().now().to_msg()
-            # ⚠️  WARNING:This is incorrect, the frame_id should be base_link
-        path_msg.header.frame_id = 'base_link'
+    #     # ------------------------------------------------------------
+    #     # Publish the predicted UGV trajectory expressed entirely
+    #     # in the UAV body frame.
+    #     # This trajectory is used directly by the NMPC.
+    #     # ------------------------------------------------------------
+    #     # Publish predicted path
+    #     path_msg = Path()
+    #     path_msg.header.stamp = self.get_clock().now().to_msg()
+    #         # ⚠️  WARNING:This is incorrect, the frame_id should be base_link
+    #     path_msg.header.frame_id = 'base_link'
 
-        for pos in self.trajectory:  
-            ps = PoseStamped()
-            ps.header = path_msg.header
-            ps.pose.position.x = float(pos[0])
-            ps.pose.position.y = float(pos[1])
-            ps.pose.position.z = float(pos[2])
+    #     for pos in self.trajectory:  
+    #         ps = PoseStamped()
+    #         ps.header = path_msg.header
+    #         ps.pose.position.x = float(pos[0])
+    #         ps.pose.position.y = float(pos[1])
+    #         ps.pose.position.z = float(pos[2])
             
-            # For NMPC, orientation might not matter, but set to identity
-            ps.pose.orientation.w = 1.0
-            path_msg.poses.append(ps)
+    #         # For NMPC, orientation might not matter, but set to identity
+    #         ps.pose.orientation.w = 1.0
+    #         path_msg.poses.append(ps)
 
-        self.pred_pub.publish(path_msg)
+    #     self.pred_pub.publish(path_msg)
        
 
       
-    def predict_ugv_trajectory_uav_frame_using_EKF(
-            self, state_vec, uav_pos, uav_yaw,
-            v_g, w_g, v_u, w_u, N, dt):
-        """
-        Predict desired UAV trajectory for NMPC to track UGV.
-        All positions are expressed in the UAV body frame (no world-frame conversion).
+    # def predict_ugv_trajectory_uav_frame_using_EKF(
+    #         self, state_vec, uav_pos, uav_yaw,
+    #         v_g, w_g, v_u, w_u, N, dt):
+    #     """
+    #     Predict desired UAV trajectory for NMPC to track UGV.
+    #     All positions are expressed in the UAV body frame (no world-frame conversion).
 
-        Parameters:
-            state_vec : np.array
-                Current relative state of UGV w.r.t UAV [x, y, z, roll, pitch, yaw].
-            uav_pos : np.array
-                UAV linear velocity in UAV frame [vx, vy].
-            uav_yaw : float
-                UAV yaw rate (rad/s).
-            v_g, w_g : np.array / float
-                UGV linear and angular velocities in UAV frame.
-            v_u, w_u : np.array / float
-                UAV linear and angular velocities in UAV frame.
-            N : int
-                Prediction horizon.
-            dt : float
-                Time step (s).
+    #     Parameters:
+    #         state_vec : np.array
+    #             Current relative state of UGV w.r.t UAV [x, y, z, roll, pitch, yaw].
+    #         uav_pos : np.array
+    #             UAV linear velocity in UAV frame [vx, vy].
+    #         uav_yaw : float
+    #             UAV yaw rate (rad/s).
+    #         v_g, w_g : np.array / float
+    #             UGV linear and angular velocities in UAV frame.
+    #         v_u, w_u : np.array / float
+    #             UAV linear and angular velocities in UAV frame.
+    #         N : int
+    #             Prediction horizon.
+    #         dt : float
+    #             Time step (s).
 
-        Returns:
-            uav_trajectory : list of np.array
-                List of UAV positions [x, y, z] in UAV frame.
-        """
-         # ============= ⭐⭐ NEW: Alternative - Predict desired UAV trajectory EKF mode ⭐⭐ =============
-         #the specific code that generates the trajectory from  EKF
-        # ⚠️  WARNING: This needs to be analyzed very carefully
-         # ------------------------------------------------------------
-        # Extract the current relative position of the UGV w.r.t UAV
-        # from the EKF/odometry state vector.
-        #
-        # state_vec[0:3] represents:
-        #   x_rel : UGV x-position relative to UAV (UAV frame)
-        #   y_rel : UGV y-position relative to UAV (UAV frame)
-        #   z_rel : UGV z-position relative to UAV (UAV frame)
-        # ------------------------------------------------------------
-        x_rel, y_rel, z_rel = state_vec[0:3]
+    #     Returns:
+    #         uav_trajectory : list of np.array
+    #             List of UAV positions [x, y, z] in UAV frame.
+    #     """
+    #      # ============= ⭐⭐ NEW: Alternative - Predict desired UAV trajectory EKF mode ⭐⭐ =============
+    #      #the specific code that generates the trajectory from  EKF
+    #     # ⚠️  WARNING: This needs to be analyzed very carefully
+    #      # ------------------------------------------------------------
+    #     # Extract the current relative position of the UGV w.r.t UAV
+    #     # from the EKF/odometry state vector.
+    #     #
+    #     # state_vec[0:3] represents:
+    #     #   x_rel : UGV x-position relative to UAV (UAV frame)
+    #     #   y_rel : UGV y-position relative to UAV (UAV frame)
+    #     #   z_rel : UGV z-position relative to UAV (UAV frame)
+    #     # ------------------------------------------------------------
+    #     x_rel, y_rel, z_rel = state_vec[0:3]
 
-        # ------------------------------------------------------------
-        # Form a 2D relative position vector for planar motion.
-        # This vector represents where the UGV currently appears
-        # from the UAV’s body frame.
-        # ------------------------------------------------------------
-        p_rel = np.array([x_rel, y_rel], dtype=float)
+    #     # ------------------------------------------------------------
+    #     # Form a 2D relative position vector for planar motion.
+    #     # This vector represents where the UGV currently appears
+    #     # from the UAV’s body frame.
+    #     # ------------------------------------------------------------
+    #     p_rel = np.array([x_rel, y_rel], dtype=float)
 
-        # ------------------------------------------------------------
-        # Initialize a list to store the predicted relative positions
-        # of the UGV over the prediction horizon.
-        # Each element will be a 3D point [x_rel, y_rel, z_rel].
-        # ------------------------------------------------------------
-        self.trajectory = []
+    #     # ------------------------------------------------------------
+    #     # Initialize a list to store the predicted relative positions
+    #     # of the UGV over the prediction horizon.
+    #     # Each element will be a 3D point [x_rel, y_rel, z_rel].
+    #     # ------------------------------------------------------------
+    #     self.trajectory = []
 
-        # 2️⃣ Define desired offset from UGV (in UAV frame)
-        # Better Strategy: If you find you keep losing the marker, try an offset of [-1.0, 0.0, -2.0].
-        #  Being 1 meter behind gives the camera a better "look ahead" angle at the UGV.
-        desired_offset = np.array([0.0, 0.0, 0.0])  # negative x is "behind" in UAV frame
+    #     # 2️⃣ Define desired offset from UGV (in UAV frame)
+    #     # Better Strategy: If you find you keep losing the marker, try an offset of [-1.0, 0.0, -2.0].
+    #     #  Being 1 meter behind gives the camera a better "look ahead" angle at the UGV.
+    #     desired_offset = np.array([0.0, 0.0, 0.0])  # negative x is "behind" in UAV frame
 
 
 
-        # Ensure velocities are 1D arrays [vx, vy] regardless of input shape
-        v_g_flat = np.array(v_g).flatten()
-        v_u_flat = np.array(v_u).flatten()
+    #     # Ensure velocities are 1D arrays [vx, vy] regardless of input shape
+    #     v_g_flat = np.array(v_g).flatten()
+    #     v_u_flat = np.array(v_u).flatten()
 
-        for i in range(N):
-            # Extract scalars using .item() to guarantee we don't have arrays
-            v_gx = float(np.array(v_g).flatten()[0])
-            v_ux = float(np.array(v_u).flatten()[0])
-            v_gy = float(np.array(v_g).flatten()[1])
-            v_uy = float(np.array(v_u).flatten()[1])
+    #     for i in range(N):
+    #         # Extract scalars using .item() to guarantee we don't have arrays
+    #         v_gx = float(np.array(v_g).flatten()[0])
+    #         v_ux = float(np.array(v_u).flatten()[0])
+    #         v_gy = float(np.array(v_g).flatten()[1])
+    #         v_uy = float(np.array(v_u).flatten()[1])
             
-            # Force p_rel elements and w_u to be pure scalars
-            curr_px = float(p_rel[0])
-            curr_py = float(p_rel[1])
-            scalar_wu = float(np.array(w_u).flatten()[0])
+    #         # Force p_rel elements and w_u to be pure scalars
+    #         curr_px = float(p_rel[0])
+    #         curr_py = float(p_rel[1])
+    #         scalar_wu = float(np.array(w_u).flatten()[0])
 
-            # 1. Predict next UGV relative position (Kinematic Model)
-            dx = v_gx - v_ux + (scalar_wu * curr_py)
-            dy = v_gy - v_uy - (scalar_wu * curr_px)
+    #         # 1. Predict next UGV relative position (Kinematic Model)
+    #         dx = v_gx - v_ux + (scalar_wu * curr_py)
+    #         dy = v_gy - v_uy - (scalar_wu * curr_px)
             
-            # Now these additions will work because dx and dy are single floats
-            p_rel[0] += dx * dt
-            p_rel[1] += dy * dt
+    #         # Now these additions will work because dx and dy are single floats
+    #         p_rel[0] += dx * dt
+    #         p_rel[1] += dy * dt
 
-            # 2. Calculate desired UAV position
-            ugv_curr_rel = np.array([p_rel[0], p_rel[1], z_rel], dtype=float)
-            desired_uav_pos = ugv_curr_rel + desired_offset
+    #         # 2. Calculate desired UAV position
+    #         ugv_curr_rel = np.array([p_rel[0], p_rel[1], z_rel], dtype=float)
+    #         desired_uav_pos = ugv_curr_rel + desired_offset
             
-            self.trajectory.append(desired_uav_pos)
+    #         self.trajectory.append(desired_uav_pos)
 
 
 
 
-        # 4️⃣ Debug visualization
-        # self.print_trajectory_debug("Predicted UGV Trajectory by EKF (UAV frame)", "base_link")
-        # ------------------------------------------------------------
-        # Publish the predicted UGV trajectory expressed entirely
-        # in the UAV body frame.
-        # This trajectory is used directly by the NMPC.
-        # ------------------------------------------------------------
-        # Publish predicted path
-        path_msg = Path()
-        path_msg.header.stamp = self.get_clock().now().to_msg()
-            # ⚠️  WARNING:This is incorrect, the frame_id should be base_link
-        path_msg.header.frame_id = 'base_link'
+    #     # 4️⃣ Debug visualization
+    #     # self.print_trajectory_debug("Predicted UGV Trajectory by EKF (UAV frame)", "base_link")
+    #     # ------------------------------------------------------------
+    #     # Publish the predicted UGV trajectory expressed entirely
+    #     # in the UAV body frame.
+    #     # This trajectory is used directly by the NMPC.
+    #     # ------------------------------------------------------------
+    #     # Publish predicted path
+    #     path_msg = Path()
+    #     path_msg.header.stamp = self.get_clock().now().to_msg()
+    #         # ⚠️  WARNING:This is incorrect, the frame_id should be base_link
+    #     path_msg.header.frame_id = 'base_link'
 
-        for pos in self.trajectory:  
-            ps = PoseStamped()
-            ps.header = path_msg.header
-            ps.pose.position.x = float(pos[0])
-            ps.pose.position.y = float(pos[1])
-            ps.pose.position.z = float(pos[2])
+    #     for pos in self.trajectory:  
+    #         ps = PoseStamped()
+    #         ps.header = path_msg.header
+    #         ps.pose.position.x = float(pos[0])
+    #         ps.pose.position.y = float(pos[1])
+    #         ps.pose.position.z = float(pos[2])
             
-            # For NMPC, orientation might not matter, but set to identity
-            ps.pose.orientation.w = 1.0
-            path_msg.poses.append(ps)
+    #         # For NMPC, orientation might not matter, but set to identity
+    #         ps.pose.orientation.w = 1.0
+    #         path_msg.poses.append(ps)
 
-        self.pred_pub.publish(path_msg)
+    #     self.pred_pub.publish(path_msg)
        
 
     # Helper functions
