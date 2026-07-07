@@ -386,7 +386,7 @@ class Controller_for_UAV_Node(Node):
             # This is now immune to world Z displacements caused by hills or valleys
             if true_distance_to_deck <= 1.5:  # 1.5m threshold to detect ground cushion contact
                 # 
-                if e_pos_horiz <= 0.2: # Must be within 18cm of center to authorize touchdown drop
+                if e_pos_horiz <= 0.2: # Must be within 20cm of center to authorize touchdown drop
                     self.current_landing_state = self.STATE_TERMINAL
                     self.terminal_phase_start_time = current_time
                     self.get_logger().info("🛑 Precision ground cushion reached. Switching to Terminal Touchdown.")
@@ -403,7 +403,7 @@ class Controller_for_UAV_Node(Node):
         elif self.current_landing_state == self.STATE_TERMINAL:  # Updated to clean global state variable reference
             # Ignore EKF updates to bypass ground-effect wash and camera frame losses.
             # Push down at a constant forced rate while holding last known velocities.
-            vz_forced = -0.9  # m/s steady descent
+            vz_forced = -2.0  # m/s steady descent
             
             # Safety cutoff: Disarm motors after 2.5 seconds of deck-seeking operations
             if (current_time - self.terminal_phase_start_time) >= 2.5:
