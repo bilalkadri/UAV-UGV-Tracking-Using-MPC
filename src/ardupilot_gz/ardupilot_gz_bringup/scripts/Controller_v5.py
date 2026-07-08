@@ -70,7 +70,7 @@ def get_yaw_from_quat(q):
 
 
 class Controller_for_UAV_Node(Node):
-    def __init__(self, mode="MPC"):
+    def __init__(self, mode="Fuzzy-PID"):
         super().__init__('controller_for_uav_node')
         
         # Controller Selection: "MPC" or "PID"
@@ -238,10 +238,6 @@ class Controller_for_UAV_Node(Node):
 
         #predicted trajectory generated from EKF node
         self.nmpc_trajectory_ref=[]
-
-
-
-
 
         #----------------------------------------------------------------------------------------
         #                         TF and ROS Setup
@@ -467,142 +463,20 @@ class Controller_for_UAV_Node(Node):
    
 
     def control_loop(self):
-        """Timer callback that switches between MPC and PID logic."""
+       
         if not self.have_rel:
             self.get_logger().warn("No relative pose received yet", throttle_duration_sec=2.0)
             self.publish_cmd([0.0, 0.0, 0.0], 0.0)
             return
 
-        if self.mode == "MPC":
-            self.run_mpc_logic()
-        elif self.mode == "PID":
+        if self.mode == "PID":
             self.run_pid_logic()
         elif self.mode== "Fuzzy-PID":
             self.run_fuzzy_pid_logic()
         else:
             self.get_logger().error(f"Invalid mode: {self.mode}")
 
-    # def run_fuzzy_pid_logic(self):
-
-    #     # --- Position Error ---
-    #     # dx, dy, dz = self.ugv_position_in_odom_frame - self.uav_position_in_odom_frame
-    #     dx, dy, dz = self.ugv_absolute_pose_in_odom_frame_EKF_estimation[:3] - self.uav_position_in_odom_frame
-        
-    #     dyaw = self.ugv_yaw_in_odom_frame - self.uav_yaw_in_odom_frame
-    #     # Wrap dyaw to [-pi, pi] to avoid discontinuous control jumps
-    #     dyaw = ((dyaw + np.pi) % (2 * np.pi)) - np.pi
-
-    #     current_error = np.array([dx, dy, dz - 2.0, dyaw])
-
-    #     # --- Error norms for fuzzy scaling ---
-    #     e_pos_norm = np.linalg.norm(current_error[:3])
-    #     e_yaw_abs = abs(dyaw)
-
-       
-    #     # --- Integral with anti-windup constraint ---
-    #     self.error_integral += current_error * self.mpc_dt
-    #     self.error_integral = np.clip(self.error_integral, -1.0, 1.0)
-
-    #     # --- Derivative calculation with First-Order Low-Pass Filter ---
-    #     raw_derivative = (current_error - self.prev_error) / self.mpc_dt
-    #     self.prev_error = current_error
-
-    #     # Low-pass filter coefficient (alpha_lpf between 0 and 1)
-    #     # Lower values = smoother but introduces slight delay. 0.2-0.3 is optimal for 10-50Hz loops.
-    #     if not hasattr(self, 'filtered_derivative'):
-    #         self.filtered_derivative = np.zeros(4)
-        
-    #     alpha_lpf = 0.25 
-    #     self.filtered_derivative = alpha_lpf * raw_derivative + (1.0 - alpha_lpf) * self.filtered_derivative
-    #     de_norm = np.linalg.norm(self.filtered_derivative[:3])
-
-    #     # # --- Derivative without Low Pass Filter ---
-    #     # error_derivative = (current_error - self.prev_error) / self.mpc_dt
-    #     # self.prev_error = current_error
-
-    #     # de_norm = np.linalg.norm(error_derivative[:3])
-
-    #     # =====================================================
-    #     # FUZZY GAIN SCALING
-    #     # =====================================================
-
-    #     # Normalize error (tune these thresholds)
-    #     e_scale = 5.0       # meters where error considered "large"
-    #     de_scale = 3.0      # m/s rate considered "fast"
-
-    #     e_ratio = np.clip(e_pos_norm / e_scale, 0.0, 1.5)
-    #     de_ratio = np.clip(de_norm / de_scale, 0.0, 1.5)
-
-    #     # --- Fuzzy Rules (smooth nonlinear functions) ---
-
-    #     # Large error → high Kp
-    #     #kp_scale = 0.02 + 0.3 * e_ratio
-    #     #kp_scale = 0.03 + 0.3 * (1 - e_ratio) # combination 1
-    #     kp_scale = 0.2 + 0.3 * (1-e_ratio) # combination 2
-    #     alpha = 0.5
-    #     #kp_scale = alpha*kp_scale + (1-alpha)*kp_scale# smoothing with original gain, alpha is the smoothing factor between 0 and 1
-    #     # 1. Kp Scale: Small error -> lower gain (smooth); Large error -> higher gain (aggressive tracking)
-    #     # This keeps the drone aggressive when far away, but soft and quiet when hovering on target.
-    #     # kp_scale = 0.4 + 0.6 * e_ratio  # Ranges from 0.4 (close) to 1.0 (far away)
-
-
-
-
-    #     # Small error → increase Ki
-    #     #ki_scale = 0.07 + 1.0 * (1.0 - e_ratio); combination 1
-    #     ki_scale = 0.07 + 1.0 * (1.0 - e_ratio); #combination 2
-
-
-    #     # High derivative → increase Kd
-    #     #kd_scale = 2.5 + 1.0 * de_ratio #combination1
-    #     kd_scale = 2.5 + 1.0 * de_ratio# combination 2
-
-
-
-    #     # Apply scaling
-    #     kp_adapt = self.kp * kp_scale
-    #     ki_adapt = self.ki * ki_scale
-    #     kd_adapt = self.kd * kd_scale
-
-    #     # =====================================================
-    #     # PID Output
-    #     # =====================================================
-
-    #     # output = (
-    #     #     kp_adapt * current_error
-    #     #     + ki_adapt * self.error_integral
-    #     #     + kd_adapt * error_derivative
-    #     # )
-
-    #     output = (
-    #         kp_adapt * current_error
-    #         + ki_adapt * self.error_integral
-    #         + kd_adapt * self.filtered_derivative  # Uses the filtered derivative signal
-    #     )
-
-    #     vx_enu, vy_enu, vz_enu, wz_enu = output
-    #     yaw = self.uav_yaw_in_odom_frame
-
-    #     # ENU → FLU rotation (same as your working PID)
-    #     vx_flu =  vx_enu * np.cos(yaw) + vy_enu * np.sin(yaw)
-    #     vy_flu = -vx_enu * np.sin(yaw) + vy_enu * np.cos(yaw)
-    #     vz_flu =  vz_enu
-    #     wz_flu =  wz_enu
-
-    #     # Clip
-    #     vx = np.clip(vx_flu, -self.v_max, self.v_max)
-    #     vy = np.clip(vy_flu, -self.v_max, self.v_max)
-    #     vz = np.clip(vz_flu, -self.vz_max, self.vz_max)
-    #     wz = np.clip(wz_flu, -self.yawdot_max, self.yawdot_max)
-
-    #     if np.random.rand() < 0.1:
-    #         self.get_logger().info(
-    #             f"FuzzyPID | e_norm:{e_pos_norm:.2f} "
-    #             f"Kp_scale:{kp_scale:.2f} "
-    #             f"Cmd: Vx:{vx:.2f} Vy:{vy:.2f} Vz:{vz:.2f}"
-    #         )
-
-    #     self.publish_cmd([vx, vy, vz], wz)
+  
 
     def run_fuzzy_pid_logic(self):
         """
@@ -846,322 +720,8 @@ class Controller_for_UAV_Node(Node):
 
         self.publish_cmd([vx, vy, vz], wz)
 
-    def run_mpc_logic(self):
-        """Existing MPC logic moved into this function."""
-        if not self.have_rel:
-            self.get_logger().warn("No relative pose received yet - publishing zero cmd")
-            self.publish_cmd([0.0,0.0,0.0], 0.0)
-            return
-
-        # DEBUG
-        # print(f"\n=== NMPC DEBUG ===")
-        # print(f"Current rel state: {self.ugv_pos_and_orient_in_UAV_frame}")
-        # print(f"v_g (UGV): {self.ugv_lin_vel_in_jackal_odom_frame}, v_u (UAV): {self.uav_lin_vel_in_odom_frame}")
-
-        # copy states/odometry to local variables to avoid race conditions
-        # x0 = self.ugv_pos_and_orient_in_UAV_frame.copy()
-        # x0=self.uav_position_in_odom_frame
-        v_g = self.ugv_lin_vel_in_jackal_odom_frame  #This must be in the odom frame not in /jacakl/odom frame
-        w_g = self.ugv_ang_vel_in_jackal_odom_frame  #This must be in the odom frame not in /jacakl/odom frame
-        v_u = self.uav_lin_vel_in_odom_frame
-        w_u = self.uav_ang_vel_in_odom_frame
-
-        # 1. Initialize the full matrix with zeros
-        # self.N is 50 in your code
-        Xref = np.zeros((self.N, 6))
-
-        # 2. Extract the UGV world coordinates in odom frame
-        ugv_x = self.ugv_position_in_odom_frame[0]
-        ugv_y = self.ugv_position_in_odom_frame[1]
-        ugv_z = self.ugv_position_in_odom_frame[2]
-
-        # 3. Extract the UAV world coordinates in odom frame
-        uav_x = self.uav_position_in_odom_frame[0]
-        uav_y = self.uav_position_in_odom_frame[1]
-        uav_z = self.uav_position_in_odom_frame[2]
-
-        # 4. Initializing x0 from odom data
-        # This is the "Option B" secret: the error calculation must be in odom frame
-        # the error should be in odom frame, so that even if the drone twist and turn
-        # the exact distance between the UAV and UGV is not affected
-        x0 = np.zeros(6)
-        x0[0] = uav_x
-        x0[1] = uav_y
-        x0[2] = uav_z
-        x0[3] = 0
-        x0[4] = 0
-        x0[5] = self.uav_yaw_in_odom_frame 
-
-
-        # x0 = np.array([
-        #     0.0,  # X: UAV is at its own origin
-        #     0.0,  # Y: UAV is at its own origin
-        #     0.0,  # Z: UAV is at its own origin (height is relative to current)
-        #     v_u[0], # VX: UAV current body-frame forward velocity
-        #     v_u[1], # VY: UAV current body-frame lateral velocity
-        #     0.0   # Yaw: UAV is facing its own "Forward" axis (0 radians)
-        # ])
+           
   
-        # 1. Get current UAV heading (World Yaw) in odom frame
-        psi = self.uav_yaw_in_odom_frame
-        
-        # self.nmpc_trajectory_ref is in jackal/odom frame, this data is coming from 
-        # Traj_Pred_Using_Sensor_Data.py
-
-        if hasattr(self, 'nmpc_trajectory_ref') and len(self.nmpc_trajectory_ref) > 0:
-               # Lookup transform: odom ← jackal/odom
-            # transform = self.tf_buffer.lookup_transform(
-            #     'odom',           # target frame
-            #     'jackal/odom',    # source frame
-            #     rclpy.time.Time()
-            # )
-            try:
-                # Attempt to find the transform between global odom and UGV odom
-                transform = self.tf_buffer.lookup_transform(
-                    'odom',           # target frame
-                    'jackal/odom',    # source frame
-                    rclpy.time.Time() # Get the latest available transform
-                )
-            except (LookupException, ConnectivityException, ExtrapolationException) as e:
-                self.get_logger().warn(f"TF2 Lookup failed: {e}")
-                return # Prevent the rest of the code from running without a valid transform
-
-            # Output Path in odom frame
-            path_msg = Path()
-            path_msg.header.stamp = self.get_clock().now().to_msg()
-            path_msg.header.frame_id = 'odom'
-
-            
-            for p in self.nmpc_trajectory_ref:
-                # 1. Create PoseStamped in source frame
-                ps_in = PoseStamped()
-                ps_in.header.frame_id = 'jackal/odom'
-                ps_in.pose.position.x = float(p[0])
-                ps_in.pose.position.y = float(p[1])
-                ps_in.pose.position.z = float(p[2])
-                ps_in.pose.orientation.w = 1.0
-
-                # 2. Transform ONLY the .pose part
-                # pose_out will be a geometry_msgs.msg.Pose object
-                pose_out = do_transform_pose(ps_in.pose, transform)
-
-                # ⭐ ADD OFFSET HERE ⭐
-                pose_out.position.z += 2.0   #UAV flying at a constant altitude of 2.0 m
-                
-                # 3. Create a new PoseStamped to put into the Path
-                new_ps = PoseStamped()
-                new_ps.header = path_msg.header # Use the target frame 'odom'
-                new_ps.pose = pose_out
-
-                path_msg.poses.append(new_ps)
-
-            self.Xref_pred_pub.publish(path_msg)
-
-
-        # controls
-        U = np.zeros((self.N, 4))
-        U_prev = np.zeros_like(U)
-
-        # optimization parameters
-        iters = 15
-        alpha = 0.05
-        eps = 1e-3
-
-
-        # This is the "Option B" secret:
-        #  the error should be in odom frame, so that even if the drone twist and turn
-        #  the exact distance between the UAV and UGV is not affected
-        # precompute base cost
-        # x0[0:3] = UAV position in odom frame
-        # Xref[k, 0:3] is the UGV position in odom frame obtained by transforming the  /relative_pose_odom_OR_ekf
-        # from FLU to ENU frame and then adding the UAV position, so effectively this is coming from Odometry+EKF
-    
-        # Xref[k, 5] = self.uav_yaw_in_odom_frame
-        # U control signals
-        # v_g and w_g are in jackal odom frame, since all the calculations are in odom frame
-        # these 2 velocities must also be in odom frame not in /jackal/odom frame 
-        cost_base = self._simulate_cost(x0, U, Xref)
-
-        for it in range(iters):
-            grad = np.zeros_like(U)
-
-            # Efficient forward-difference gradient: perturb one control element at a time
-            for i in range(self.N):
-                for j in range(4):
-                    Up = U.copy()
-                    Up[i,j] += eps
-                    cost_p = self._simulate_cost(x0, Up, Xref)
-                    grad[i,j] = (cost_p - cost_base) / eps
-
-            # gradient step
-            U -= alpha * grad
-
-            # projection
-            for k in range(self.N):
-                U[k,0] = np.clip(U[k,0], -self.v_max, self.v_max)  # vx control signal
-                U[k,1] = np.clip(U[k,1], -self.v_max, self.v_max)  # vy control signal
-                U[k,2] = np.clip(U[k,2], -self.vz_max, self.vz_max)# vz control signal
-                U[k,3] = np.clip(U[k,3], -self.yawdot_max, self.yawdot_max) # yaw control signal
-
-            # update U_prev and base cost for next iteration
-            U_prev = U.copy()
-            cost_base = self._simulate_cost(x0, U, Xref)
-
-            # simple stopping
-            if np.linalg.norm(grad) < 1e-2:
-                break
-
-        # extract first command
-        u0 = U[0,:]
-        vx_cmd, vy_cmd, vz_cmd, yawdot_cmd = float(u0[0]), float(u0[1]), float(u0[2]), float(u0[3])
-        # print(f"MPC Command: vx={vx_cmd:.3f}, vy={vy_cmd:.3f}, vz={vz_cmd:.3f}")
-
-        # safety checks
-        if not np.isfinite(vx_cmd + vy_cmd + vz_cmd + yawdot_cmd):
-            self.get_logger().error("MPC produced non-finite command — sending zero")
-            vx_cmd, vy_cmd, vz_cmd, yawdot_cmd = 0.0, 0.0, 0.0, 0.0
-
-        # clip again
-        vx_cmd = float(np.clip(vx_cmd, -self.v_max, self.v_max))
-        vy_cmd = float(np.clip(vy_cmd, -self.v_max, self.v_max))
-        vz_cmd = float(np.clip(vz_cmd, -self.vz_max, self.vz_max))
-        yawdot_cmd = float(np.clip(yawdot_cmd, -self.yawdot_max, self.yawdot_max))
-
-        # log every few cycles to avoid slowing down
-        if np.random.rand() < 0.25:
-            self.get_logger().info(f"MPC Command → vx={vx_cmd:.3f}, vy={vy_cmd:.3f}, vz={vz_cmd:.3f}, yawdot={yawdot_cmd:.3f}")
-
-        # Check if command makes sense:
-        dx, dy, dz = self.ugv_pos_and_orient_in_UAV_frame[0:3]
-        
-        self.publish_cmd([vx_cmd, vy_cmd, vz_cmd], yawdot_cmd)
-        
-    def _simulate_cost(self, x0, U, Xref):
-        # This is the "Option B" secret:
-        #  the error should be in odom frame, so that even if the drone twist and turn
-        #  the exact distance between the UAV and UGV is not affected
-        # Xref[k, 0:3] is the UGV position in odom frame obtained by transforming the  
-        # /relative_pose_odom_OR_ekf to odom frame(from FLU to ENU frame and then adding the UAV position),
-        # so effectively this is coming from Odometry+EKF
-        # x0 is the UAV position in odom frame
-        x_sim = x0.copy()  #x0 is the position of the UAV in the odom frame
-
-        total = 0.0
-
-        for k in range(self.N):
-            # 1. ERROR CALCULATION (Absolute Error)
-            # Xref[k, 0:3] is in the odom frame
-            # Xref[k, 0:3] is the UGV position in odom frame obtained by transforming the  /relative_pose_odom_OR_ekf
-            # from FLU to ENU frame and then adding the UAV position, so efgfectivekly this is coming from Odometry+EKF
-
-            # x_sim ​: The predicted state vector of the UAV at time step k, 
-            # containing its position and velocity in the global frame:
-            # --- 1. Calculate Error FIRST (at the start of the step) ---
-            e_pos = x_sim[0:3] - Xref[k, 0:3]
-
-            if k == 0:
-                error_msg = PointStamped()
-                error_msg.header.stamp = self.get_clock().now().to_msg()
-                error_msg.header.frame_id = 'odom'
-                error_msg.point.x, error_msg.point.y, error_msg.point.z = e_pos.astype(float)
-                self.error_pub.publish(error_msg)
-           
-            # --- 2. Add to Cost ---
-            total += e_pos.T @ self.Q_pos @ e_pos
-
-            # --- 3. Predict NEXT state (Integrate) ---
-            yaw_sim = x_sim[5] 
-            
-            # --- 4. Get Control Inputs (UAV Body Frame i.e. FLU)
-            vx_uav = U[k, 0]  
-            vy_uav = U[k, 1]
-            vz_uav = U[k, 2]
-            yawrate_uav = U[k, 3]
-
-            # ---5. TRANSFORM Control Signals i.e. Body Velocity in (FLU) to World Velocity in (ENU)
-            # This is the "Option B" secret: 
-            # We map Body (Forward/Left) to World (North/East)
-            vdx_world = vx_uav * np.cos(yaw_sim) - vy_uav * np.sin(yaw_sim)
-            vdy_world = vx_uav * np.sin(yaw_sim) + vy_uav * np.cos(yaw_sim)
-            vdz_world = vz_uav
-            
-            # ---6. UPDATE World State (UAV Position in Odom)
-            # x_sim[0:3] are now UAV World Coordinates in odom frame
-           
-            x_sim[0] += vdx_world * self.pred_dt
-            x_sim[1] += vdy_world * self.pred_dt
-            x_sim[2] += vdz_world * self.pred_dt
-            x_sim[5] += yawrate_uav * self.pred_dt
-
-           
-        
-
-
-           
-        
-        # for k in range(self.N):
-        #     # Current relative orientation
-        #     roll, pitch, yaw = x_sim[3], x_sim[4], x_sim[5]
-        #     R_rel = rpy_to_rot(roll, pitch, yaw)  # UGV relative to UAV
-            
-        #     vk = U[k, 0:3]  # UAV velocity command in UAV body frame
-        #     yawdotk = U[k, 3]
-            
-        #     # ============= CORRECTED DYNAMICS =============
-        #     # Transform UGV velocity to UAV body frame
-        #     # v_g is in UGV body frame, need to transform to UAV body frame
-        #     # Simplified: Assume same orientation for now
-        #     v_g_uav_body = R_rel @ v_g  # Transform UGV velocity to UAV frame
-            
-        #     # Relative velocity: how relative position changes
-        #     # dx/dt = v_ugv_in_uav_frame - v_uav
-        #     rel_vel = v_g_uav_body - vk
-            
-        #     x_sim[0:3] = x_sim[0:3] + rel_vel * self.pred_dt
-            
-        #     # Angular: UGV should face UAV (yaw → 0)
-        #     # Simple: yaw_dot = -yaw (to reduce yaw error)
-        #     # rel_omega = np.array([0.0, 0.0, -yaw + yawdotk])
-        #     # x_sim[5] = x_sim[5] + rel_omega[2] * self.pred_dt
-
-        #     x_sim[5] = x_sim[5] + (w_g[2] - yawdotk) * self.pred_dt
-        #     # ==============================================
-            
-        #     # Position error
-        #     # ❌❌❌❌❌ I think this is the major problem ❌❌❌❌❌
-        #     # the error should be in odom frame, so that even if the drone twist and turn
-        #     # the exact distance between the UAV and UGV is not affected
-        #     # I need to correct this calculation
-        #     # x_sim is UGV position and orientation in UAV frame
-        #     # X_ref  is also self.ugv_pos_and_orient_in_UAV_frame[0:3]
-        #     e_pos = x_sim[0:3] - Xref[k, 0:3]
-        #     total += e_pos.T @ self.Q_pos @ e_pos
-            
-        #     # Yaw error only
-        #     yaw_error = wrap_angle(x_sim[5] - Xref[k, 5])
-        #     total += self.Q_ang[2, 2] * yaw_error**2
-            
-        #     # Control effort
-        #     total += U[k, :].T @ np.diag([0.1, 0.1, 0.1, 0.01]) @ U[k, :]
-            
-        #     # FOV cost
-        #     horiz_err = np.linalg.norm(x_sim[0:2])
-        #     total += self.W_fov * (horiz_err**2) / ((horiz_err**2) + (Xref[k, 2]**2) + 1e-6)
-        
-        # Smoothness
-        for k in range(self.N):
-            du = U[k, :] - (np.zeros(4) if k == 0 else U[k-1, :])
-            total += du.T @ self.R_du @ du
-        
-        return float(total)   
-
-
-    # --- (Include all other helper functions like rel_pose_cb, quat_to_rpy, etc here) ---
-    # def rel_pose_odom_OR_ekf_cb(self, msg: PoseStamped):
-    #     x, y, z = msg.pose.position.x, msg.pose.position.y, msg.pose.position.z
-    #     roll, pitch, yaw = self.quat_to_rpy_msg(msg.pose.orientation)
-    #     self.ugv_pos_and_orient_in_UAV_frame = np.array([x, y, z, roll, pitch, yaw], dtype=float)
-    #     self.have_rel = True
     
     def absolute_pose_odom_OR_ekf_cb(self, msg: PoseStamped):
         # This callback is getting UGV position from EKF and is most critical for the control logic
@@ -1196,57 +756,13 @@ class Controller_for_UAV_Node(Node):
         yaw = np.arctan2(siny, cosy)
         return roll, pitch, yaw
     
-    # def debug_nmpc_status(self, x0, U, Xref):
-    #     """
-    #     Minimal NMPC Debugger to identify coordinate frame mismatches.
-    #     x0: Current state [x, y, z, r, p, yaw] (Relative)
-    #     U:  Control array [N, 4]
-    #     Xref: Reference trajectory [N, 6]
-    #     """
-    #     print("\n" + "!"*30 + " NMPC COORDINATE DEBUG " + "!"*30)
-        
-    #     # 1. STATE VS REFERENCE (Initial Error)
-    #     # This tells you if the NMPC knows where it is relative to the target
-    #     print(f"CURRENT RELATIVE STATE (x0):  X:{x0[0]:.2f}, Y:{x0[1]:.2f}, Z:{x0[2]:.2f}, Yaw:{np.degrees(x0[5]):.1f}°")
-    #     print(f"FIRST TARGET POINT (Xref[0]): X:{Xref[0,0]:.2f}, Y:{Xref[0,1]:.2f}, Z:{Xref[0,2]:.2f}, Yaw:{np.degrees(Xref[0,5]):.1f}°")
-        
-    #     pos_error = Xref[0, 0:3] - x0[0:3]
-    #     print(f"IMMEDIATE ERROR VECTOR:      dX:{pos_error[0]:.2f}, dY:{pos_error[1]:.2f}, dZ:{pos_error[2]:.2f}")
-
-    #     # 2. TRAJECTORY TREND
-    #     # Check if the predicted trajectory is moving away or toward the drone
-    #     if self.N > 1:
-    #         traj_move = Xref[-1, 0:3] - Xref[0, 0:3]
-    #         print(f"TRAJECTORY TREND (N steps):  dX:{traj_move[0]:.2f}, dY:{traj_move[1]:.2f}, dZ:{traj_move[2]:.2f}")
-
-    #     # 3. CONTROL ALIGNMENT CHECK
-    #     # This is the "Truth Test": if dX is positive, VX should be positive.
-    #     u0 = U[0, :]
-    #     print("-" * 20)
-    #     print(f"MPC COMMAND (u0):            VX:{u0[0]:.3f}, VY:{u0[1]:.3f}, VZ:{u0[2]:.3f}, Wz:{u0[3]:.3f}")
-        
-    #     # LOGIC CHECK: Does the command reduce the error?
-    #     # If dX > 0 (Target ahead), VX should be > 0.
-    #     # If dX < 0 (Target behind), VX should be < 0.
-    #     vx_correct = (pos_error[0] > 0 and u0[0] > 0) or (pos_error[0] < 0 and u0[0] < 0)
-    #     vy_correct = (pos_error[1] > 0 and u0[1] > 0) or (pos_error[1] < 0 and u0[1] < 0)
-        
-    #     print(f"DIRECTIONAL LOGIC CHECK:     VX: {'✅ CORRECT' if vx_correct else '❌ REVERSED'}")
-    #     print(f"                             VY: {'✅ CORRECT' if vy_correct else '❌ REVERSED'}")
-        
-    #     # 4. VELOCITY CONTEXT
-    #     if hasattr(self, 'v_u'):
-    #         print(f"UAV CURR VEL (Body):         VX:{self.v_u[0]:.2f}, VY:{self.v_u[1]:.2f}")
-
-    #     print("!"*83 + "\n")
-
-# (Include other callbacks as provided in original script)
+  
 
 def main(args=None):
     rclpy.init(args=args)
     
     # Selection logic
-    mode_selection = "Fuzzy-PID"  # Set to "MPC" or "PID" or "Fuzzy-PID"
+    mode_selection = "Fuzzy-PID"  # Set to "PID" or "Fuzzy-PID"
     node = Controller_for_UAV_Node(mode=mode_selection)
     
     try:

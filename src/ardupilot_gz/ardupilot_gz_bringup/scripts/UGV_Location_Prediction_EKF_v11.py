@@ -60,6 +60,25 @@ class AbsolutePoseEKF(Node):
         #----------------------------------------------------------------------------------------
         #                         Class Variables 
         #----------------------------------------------------------------------------------------
+        
+        #to simulate sensor noise and drift in wheel odometry
+        # Initialize cumulative drift variables (start at zero)
+        self.drift_x = 0.0
+        self.drift_y = 0.0
+        self.drift_yaw = 0.0
+
+        # Define standard deviations for the Random Walk (Drift rate per iteration)
+        # Adjust these depending on your publisher rate (e.g., if running at 10Hz)
+        # INCREASE THESE VALUES to guarantee visible divergence on both axes
+        self.drift_rate_pos_x = 0.035  # Independent higher rate for X axis
+        self.drift_rate_pos_y = 0.035  # Independent higher rate for Y axis
+        self.drift_rate_yaw   = 0.012  # Higher heading drift rate (radians per step)
+
+        # Define standard deviations for instantaneous White Gaussian Noise
+        self.noise_std_pos = 0.05    # 5 cm instantaneous jitter
+        self.noise_std_yaw = 0.02    # ~1.1 degrees instantaneous jitter
+        
+        
         # Mode control
         self.ekf_active = False  # True: using EKF, False: using odometry
         self.aruco_lost_count = 0
@@ -166,7 +185,7 @@ class AbsolutePoseEKF(Node):
 
         #----------------------------------------------------------------------------------------
         #                                       Subscribers
-                                                                                                                                                                            
+        #----------------------------------------------------------------------------------------                                                                                                                                                                    
       
         # self.create_subscription(Imu, '/imu', self.imu_cb, 10)
         #UAV odometry is in world frame i.e. /odom
@@ -522,12 +541,6 @@ class AbsolutePoseEKF(Node):
 
     def run_odometry_mode(self):
         # """Run odometry-based tracking"""
-        # print("[ODOM] Running odometry mode")
-        # I will just update the /absolute_pose_odometry topic with the UGV's world position (not relative to UAV) for visualization
-        # This will show the UGV's position in the world (odom) frame
-        #  self.pub_absolute_only_odometry = self.create_publisher(PoseStamped, '/absolute_pose_odometry', 10) # publishing in  odom frame
-
-
 
         # Check if we have data
         if self.ugv_position_in_odom_frame is None or self.uav_position_in_odom_frame is None:
@@ -535,17 +548,36 @@ class AbsolutePoseEKF(Node):
             print("[ODOM] Waiting for data...")
             # self.publish_safe_pose()
             # return
-               
+        
+        #Simulate wheel drfit and sensor noise in UGV odometry
+        
+        # 1. Accumulate separate random walks for each global axis independently
+        self.drift_x += np.random.normal(0, self.drift_rate_pos_x)
+        self.drift_y += np.random.normal(0, self.drift_rate_pos_y)
+        self.drift_yaw += np.random.normal(0, self.drift_rate_yaw)
+
+        # 2. Generate instantaneous White Gaussian Noise
+        white_noise_x = np.random.normal(0, self.noise_std_pos)
+        white_noise_y = np.random.normal(0, self.noise_std_pos)
+        white_noise_yaw = np.random.normal(0, self.noise_std_yaw)
+
+        # 3. Apply both noise types to the ideal ground-truth simulation values
+        noisy_x = self.ugv_position_in_odom_frame[0] + self.drift_x + white_noise_x
+        noisy_y = self.ugv_position_in_odom_frame[1] + self.drift_y + white_noise_y
+        noisy_z = self.ugv_position_in_odom_frame[2] # Z typically stays stable or ground-locked, but can add noise if needed
+        noisy_yaw = self.ugv_yaw_in_odom_frame + self.drift_yaw + white_noise_yaw
+
+
         msg = PoseStamped()
         msg.header.stamp = self.get_clock().now().to_msg()
         msg.header.frame_id = 'odom'  # World frame
         
-        # Position: arrow starts at UAV origin
-        msg.pose.position.x = self.ugv_position_in_odom_frame[0]  # UGV world X
-        msg.pose.position.y = self.ugv_position_in_odom_frame[1]  # UGV world Y
-        msg.pose.position.z = self.ugv_position_in_odom_frame[2]  # UGV world Z
+        # Position with introduced noise and drift
+        msg.pose.position.x = noisy_x  
+        msg.pose.position.y = noisy_y  
+        msg.pose.position.z = noisy_z
         
-        qx, qy, qz, qw = self.get_quat_from_rpy(0.0,0.0,self.ugv_yaw_in_odom_frame) # UGV yaw in world frame, this will make the arrow point in the direction of UGV's heading in the world frame
+        qx, qy, qz, qw = self.get_quat_from_rpy(0.0,0.0,noisy_yaw) # UGV yaw in world frame, this will make the arrow point in the direction of UGV's heading in the world frame
         # Orientation: points toward UGV
         msg.pose.orientation.x = qx
         msg.pose.orientation.y = qy
