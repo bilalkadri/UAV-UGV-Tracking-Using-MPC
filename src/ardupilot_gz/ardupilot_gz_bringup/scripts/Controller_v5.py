@@ -76,10 +76,10 @@ def get_yaw_from_quat(q):
 
 
 class Controller_for_UAV_Node(Node):
-    def __init__(self, mode="MPC"):
+    def __init__(self, mode="Fuzzy-PID"):
         super().__init__('controller_for_uav_node')
         
-        # Controller Selection: "MPC" or "PID"
+        # Controller Selection: "Fuzzy-PID" or "PID"
         self.mode = mode
 
         #----------------------------------------------------------------------------------------
@@ -382,11 +382,11 @@ class Controller_for_UAV_Node(Node):
             # self.publish_distance_marker(uav_z, ugv_z)  # Visualize true distance to deck in RViz
            
            
-            # If the drone hits the ground cushion (20cm), switch to open-loop touchdown
-            # This is now immune to world Z displacements caused by hills or valleys
+            # If the drone hits the ground cushion (1.0m), switch to open-loop touchdown
+            # This is now immune to world Z displacement.......................................s caused by hills or valleys
             if true_distance_to_deck <= 1.5:  # 1.5m threshold to detect ground cushion contact
                 # 
-                if e_pos_horiz <= 0.2: # Must be within 20cm of center to authorize touchdown drop
+                if e_pos_horiz <= 0.15: # Must be within 20cm of center to authorize touchdown drop
                     self.current_landing_state = self.STATE_TERMINAL
                     self.terminal_phase_start_time = current_time
                     self.get_logger().info("🛑 Precision ground cushion reached. Switching to Terminal Touchdown.")
@@ -399,21 +399,22 @@ class Controller_for_UAV_Node(Node):
                 # Your fuzzy adaptive scaling will handle velocity damping naturally
                 self.GSPIDFLC_Tracking_and_Landing_Controller(target_altitude_offset=0.0)
 
-        # 🛑 STATE 2: Open-Loop Terminal Touchdown (Blinded Phase)
-        elif self.current_landing_state == self.STATE_TERMINAL:  # Updated to clean global state variable reference
-            # Ignore EKF updates to bypass ground-effect wash and camera frame losses.
-            # Push down at a constant forced rate while holding last known velocities.
-            vz_forced = -2.0  # m/s steady descent
-            
-            # Safety cutoff: Disarm motors after 2.5 seconds of deck-seeking operations
-            if (current_time - self.terminal_phase_start_time) >= 2.5:
-                self.current_landing_state = self.STATE_LANDED
-                # self.get_logger().info("🏁 Touchdown confirmed. Disarming propulsion systems.")
-                # self.publish_cmd([0.0, 0.0, 0.0], 0.0)
-            else:
-                # Maintain latched horizontal velocities so it travels with the deck's momentum
-                self.publish_cmd([self.latched_vx_flu, self.latched_vy_flu, vz_forced], 0.0)
-       
+        # 🛑 STATE 2: Closed-Loop Forced Descent
+        elif self.current_landing_state == self.STATE_TERMINAL: 
+
+                # Abort Safety is ignored during terminal phase for robustness.
+                uav_z = self.uav_position_in_odom_frame[2]
+                ugv_z = self.ugv_position_in_odom_frame[2]  
+                true_distance_to_deck = uav_z - ugv_z 
+
+                # Triggernative native flight controller landing (State 3) when super low
+                if true_distance_to_deck <= 1.5 and e_pos_horiz <= 0.2:  
+                    self.current_landing_state = self.STATE_LANDED
+                    self.get_logger().info("🏁 Deck contacted or imminent. Swapping native land mode.")
+                else:
+                    # Drive height down but slightly slower than before to maintain thrust for pitching
+                    self.GSPIDFLC_Tracking_and_Landing_Controller(target_altitude_offset=0.0)
+
         # # 🏁 STATE 3: Vehicle Landed
         elif self.current_landing_state == self.STATE_LANDED:
                 
@@ -613,37 +614,15 @@ class Controller_for_UAV_Node(Node):
             self.get_logger().error("❌❌❌❌❌Exception in uav_pose_cb:❌❌❌❌❌\n" + traceback.format_exc())
    
 
-    # def control_loop(self):
-    #     """Timer callback that switches between MPC and PID logic."""
-    #     if not self.have_rel:
-    #         self.get_logger().warn("No relative pose received yet", throttle_duration_sec=2.0)
-    #         self.publish_cmd([0.0, 0.0, 0.0], 0.0)
-    #         return
-
-    #     # Controller mode selection
-    #     if self.mode == "MPC":
-    #         self.run_mpc_logic()
-    #     elif self.mode == "PID":
-    #         self.run_pid_logic()
-    #     elif self.mode== "Fuzzy-PID":
-    #         self.run_fuzzy_pid_logic()
-    #     else:
-    #         self.get_logger().error(f"Invalid mode: {self.mode}")
-        
-    #     #Landing state machine runs in the background regardless of control mode, continuously monitoring tracking error and publishing state pulses
-    #     self.run_autonomous_landing_logic()  # Always run landing logic to publish state pulses
-
     def control_loop(self):
-        """Timer callback that switches between MPC, PID, and Landing Logic."""
+        """Timer callback that switches between Fuzzy-PID, PID """
         if not self.have_rel:
             self.get_logger().warn("No relative pose received yet", throttle_duration_sec=2.0)
             self.publish_cmd([0.0, 0.0, 0.0], 0.0)
             return
 
         # Controller mode selection
-        if self.mode == "MPC":
-            self.run_mpc_logic()
-        elif self.mode == "PID":
+        if self.mode == "PID":
             self.run_pid_logic()
         elif self.mode == "Fuzzy-PID":
             # 🟢 FIX: Let the state machine take full exclusive control of publishing
@@ -815,10 +794,11 @@ class Controller_for_UAV_Node(Node):
             vx_enu_prelim = output_prelim[0]
             vy_enu_prelim = output_prelim[1]
             vz_enu_prelim = 0
-        elif self.current_landing_state == self.STATE_DESCENT:
+        # Group DESCENT and TERMINAL together since both require closed-loop XY tracking
+        elif self.current_landing_state in [self.STATE_DESCENT, self.STATE_TERMINAL]:
             vx_enu_prelim = output_prelim[0]
             vy_enu_prelim = output_prelim[1]
-            vz_enu_prelim = output_prelim[2] 
+            vz_enu_prelim = output_prelim[2]
         
         # Check for saturation
         if abs(vx_enu_prelim) > fuzzy_v_max:
@@ -844,9 +824,13 @@ class Controller_for_UAV_Node(Node):
             vz_enu = 0
         elif self.current_landing_state == self.STATE_DESCENT:
             vz_enu = output_prelim[2] 
+        elif self.current_landing_state == self.STATE_TERMINAL:
+            # ✅ FIX: Lower the forced rate. Restore pitch control authority.
+            # -2.0m/s dumps collective thrust, killing pitching authority. 
+            # -1.0m/s keeps enough thrust alive for the rear motors to force the nose down.
+            vz_enu = -2.0
 
-
-      
+   
         
         # ENU → FLU rotation
         yaw = self.uav_yaw_in_odom_frame
@@ -854,6 +838,26 @@ class Controller_for_UAV_Node(Node):
         vy_flu = -vx_enu * np.sin(yaw) + vy_enu * np.cos(yaw)
         vz_flu =  vz_enu
         wz_flu =  wz_enu
+
+        # 2. Apply Oscillation Detection & Damping HERE (On raw controller outputs only)
+        if not hasattr(self, 'prev_vx_cmd'):
+            self.prev_vx_cmd = 0.0
+            self.prev_vy_cmd = 0.0
+        
+        # Detect sign changes (oscillation indicator)
+        vx_sign_change = (vx_flu * self.prev_vx_cmd < 0) and (abs(vx_flu) > 0.5) and (abs(self.prev_vx_cmd) > 0.5)
+        vy_sign_change = (vy_flu * self.prev_vy_cmd < 0) and (abs(vy_flu) > 0.5) and (abs(self.prev_vy_cmd) > 0.5)
+
+        if vx_sign_change or vy_sign_change:
+            damping_factor = 0.7  # Reduce command by 30%
+            vx_flu *= damping_factor
+            vy_flu *= damping_factor
+            if np.random.rand() < 0.3:
+                self.get_logger().warn(f"Oscillation detected! Damping applied. Vx_flu:{vx_flu:.2f} Vy_flu:{vy_flu:.2f}")
+
+        # Store the post-damping flu velocities for the next iteration comparison        
+        self.prev_vx_cmd = vx_flu
+        self.prev_vy_cmd = vy_flu
 
         # =====================================================================
         # 🟢 MINIMAL VELOCITY FEEDFORWARD INJECTION 
@@ -872,7 +876,7 @@ class Controller_for_UAV_Node(Node):
         vx_ugv_ff =  vx_ugv_odom * np.cos(yaw) + vy_ugv_odom * np.sin(yaw)
         vy_ugv_ff = -vx_ugv_odom * np.sin(yaw) + vy_ugv_odom * np.cos(yaw)
 
-        # Introduce a tuning factor (1.1 = inject 110% of target speed to force fast closing)
+        # Introduce a tuning factor (1.1 = inject 115% of target speed to force fast closing)
         k_ff = 1.15
 
         # Inject the feedforward term directly into your body-frame tracking outputs.
@@ -884,38 +888,19 @@ class Controller_for_UAV_Node(Node):
         # Final clipping (should rarely trigger now due to anti-saturation)
         vx = np.clip(vx_flu, -fuzzy_v_max, fuzzy_v_max)
         vy = np.clip(vy_flu, -fuzzy_v_max, fuzzy_v_max)
-        vz = np.clip(vz_flu, -fuzzy_vz_max, fuzzy_vz_max)
+        # vz = np.clip(vz_flu, -fuzzy_vz_max, fuzzy_vz_max)
+
+        # ✅ Open up the Z limits during terminal phase, otherwise -2.0m/s gets clipped to -0.4m/s
+        if self.current_landing_state == self.STATE_TERMINAL:
+            vz = np.clip(vz_flu, -2.5, 2.5)  # Allow a high speed drop
+        else:
+            vz = np.clip(vz_flu, -fuzzy_vz_max, fuzzy_vz_max)
+
         wz = np.clip(wz_flu, -fuzzy_yaw_max, fuzzy_yaw_max)
+   
+      
         
-        # Oscillation detection and damping
-        if not hasattr(self, 'prev_vx_cmd'):
-            self.prev_vx_cmd = 0.0
-            self.prev_vy_cmd = 0.0
-        
-        # Detect sign changes (oscillation indicator)
-        vx_sign_change = (vx * self.prev_vx_cmd < 0) and (abs(vx) > 0.5) and (abs(self.prev_vx_cmd) > 0.5)
-        vy_sign_change = (vy * self.prev_vy_cmd < 0) and (abs(vy) > 0.5) and (abs(self.prev_vy_cmd) > 0.5)
-        
-        if vx_sign_change or vy_sign_change:
-            # Apply extra damping when oscillating detected
-            damping_factor = 0.7  # Reduce command by 30%
-            vx *= damping_factor
-            vy *= damping_factor
-            if np.random.rand() < 0.3:
-                self.get_logger().warn(f"Oscillation detected! Damping applied. Vx:{vx:.2f} Vy:{vy:.2f}")
-        
-        self.prev_vx_cmd = vx
-        self.prev_vy_cmd = vy
-        
-        # # Debug logging
-        # if np.random.rand() < 0.1:
-        #     self.get_logger().info(
-        #         f"FuzzyPID | Err:{e_pos_norm:.2f}m | "
-        #         f"Kp:[{kp_adapt[0]:.2f},{kp_adapt[1]:.2f}] "
-        #         f"Ki_s:{ki_scale:.2f} Kd_s:{kd_scale:.2f} | "
-        #         f"Cmd:[{vx:.2f},{vy:.2f},{vz:.2f}] | "
-        #         f"Sat:{'YES' if max(abs(vx_enu_prelim),abs(vy_enu_prelim))>fuzzy_v_max*0.95 else 'NO'}"
-        #     )
+   
 
         if self.current_landing_state != 2:
             self.latched_vx_flu = vx
@@ -923,239 +908,6 @@ class Controller_for_UAV_Node(Node):
         
         self.publish_cmd([vx, vy, vz], wz)
 
-
-    # def run_fuzzy_pid_logic(self):
-    #     """
-    #     Fuzzy-PID controller with anti-saturation protection and smooth gain scheduling
-    #     """
-    #     # --- Position Error Calculation ---
-    #     if self.ekf_active:
-    #         dx, dy, dz = self.ugv_absolute_pose_in_odom_frame_BLENDED[:3] - self.uav_position_in_odom_frame
-    #     else:
-    #         dx, dy, dz = self.ugv_absolute_pose_in_odom_frame_BLENDED[:3]- self.uav_position_in_odom_frame
-        
-    #     dyaw = self.ugv_yaw_in_odom_frame - self.uav_yaw_in_odom_frame
-    #     dyaw = wrap_angle(dyaw)
-        
-    #     # --- Publishing control error on the topic '/controller/tracking_error'---
-    #     msg = PointStamped()
-
-    #     msg.header.stamp = self.get_clock().now().to_msg()
-    #     msg.header.frame_id = "odom"   # or "map" depending on your system
-
-    #     msg.point.x = float(dx)
-    #     msg.point.y = float(dy)
-    #     msg.point.z = float(dz)
-
-    #     self.tracking_error_pub.publish(msg)
-
-
-
-
-    #     current_error = np.array([dx, dy, dz - 2.0, dyaw])
-        
-    #     e_pos_norm = np.linalg.norm(current_error[:3])
-    #     e_yaw_abs = abs(dyaw)
-        
-    #     # =====================================================
-    #     # ANTI-SATURATION VELOCITY LIMITS
-    #     # =====================================================
-    #     # Define strict limits to prevent saturation
-    #     fuzzy_v_max = 2.5      # Keep well below actuator limits
-    #     fuzzy_vz_max = 0.4
-    #     fuzzy_yaw_max = 0.2
-        
-    #     # =====================================================
-    #     # ADAPTIVE INTEGRAL WITH BACK-CALCULATION ANTI-WINDUP
-    #     # =====================================================
-    #     if not hasattr(self, 'fuzzy_error_integral'):
-    #         self.fuzzy_error_integral = np.zeros(4)
-        
-    #     # Calculate desired integral increment
-    #     integral_increment = current_error * self.controller_dt
-        
-    #     # Only integrate position errors (not yaw) when within reasonable range
-    #     if e_pos_norm < 4.0:
-    #         self.fuzzy_error_integral += integral_increment
-    #     else:
-    #         # Aggressive decay when far
-    #         self.fuzzy_error_integral *= 0.9
-        
-    #     # Tighter anti-windup limits
-    #     self.fuzzy_error_integral = np.clip(self.fuzzy_error_integral, -0.5, 0.5)
-        
-    #     # =====================================================
-    #     # DERIVATIVE WITH ADAPTIVE FILTERING
-    #     # =====================================================
-    #     raw_derivative = (current_error - self.prev_error) / self.controller_dt
-    #     self.prev_error = current_error.copy()
-        
-    #     if not hasattr(self, 'filtered_derivative'):
-    #         self.filtered_derivative = np.zeros(4)
-        
-    #     # Adaptive filtering: more filtering when oscillating
-    #     de_norm = np.linalg.norm(raw_derivative[:3])
-    #     if de_norm > 3.0:  # High derivative = likely oscillating
-    #         alpha_lpf = 0.1  # Heavy filtering
-    #     elif de_norm > 1.0:
-    #         alpha_lpf = 0.2  # Moderate filtering
-    #     else:
-    #         alpha_lpf = 0.3  # Normal filtering
-        
-    #     self.filtered_derivative = alpha_lpf * raw_derivative + (1.0 - alpha_lpf) * self.filtered_derivative
-        
-    #     # =====================================================
-    #     # SMOOTH GAIN SCHEDULING WITH SATURATION PREVENTION
-    #     # =====================================================
-        
-    #     # Base gains - moderate values
-    #     kp_base = np.array([0.6, 0.6, 0.4, 0.25])
-    #     ki_base = np.array([0.008, 0.008, 0.006, 0.004])
-    #     kd_base = np.array([0.06, 0.06, 0.03, 0.02])
-        
-    #     # Calculate maximum allowed Kp to prevent saturation
-    #     # v_max = kp_max * error_max, so kp_max = v_max / error_max
-    #     if e_pos_norm > 0.1:
-    #         kp_max_allowed = fuzzy_v_max / e_pos_norm
-    #     else:
-    #         kp_max_allowed = fuzzy_v_max / 0.1  # Prevent division by zero
-        
-    #     # Smooth gain calculation using sigmoid-like function
-    #     # This prevents abrupt gain changes that cause oscillation
-        
-        
-    #     # Normalized error (0 to 1 range)
-    #     e_norm = np.clip(e_pos_norm / 8.0, 0.0, 1.0)  # 8m as "very far"
-        
-    #     # Smooth Kp scaling: higher when far, lower when close
-    #     # Uses smooth transition instead of hard thresholds
-    #     kp_scale = 0.5 + 1.0 * e_norm  # Ranges from 0.5 to 1.5 smoothly
-    #     kp_scale = np.clip(kp_scale, 0.4, min(1.8, kp_max_allowed / np.max(kp_base[:2])))
-        
-    #     # Ki scaling: only active when close and not oscillating
-    #     closeness_factor = np.exp(-2.0 * e_pos_norm)  # 1 when close, 0 when far
-    #     oscillation_factor = np.exp(-de_norm / 2.0)   # 1 when smooth, 0 when oscillating
-    #     ki_scale = closeness_factor * oscillation_factor * 1.5
-    #     ki_scale = np.clip(ki_scale, 0.0, 1.5)
-        
-    #     # Kd scaling: higher when oscillating or moving fast
-    #     kd_scale = 1.0 + 0.5 * (1.0 - oscillation_factor)  # Increases when oscillating
-    #     kd_scale = np.clip(kd_scale, 0.8, 2.5)
-        
-    #     # Apply scaling with saturation check
-    #     kp_adapt = kp_base * kp_scale
-        
-    #     # Anti-saturation: reduce Kp if command would saturate
-    #     max_kp_effect = np.max(np.abs(kp_adapt[:2] * current_error[:2]))
-    #     if max_kp_effect > fuzzy_v_max:
-    #         # Scale down Kp to prevent saturation
-    #         kp_reduction = fuzzy_v_max / max_kp_effect * 0.9  # 90% of max to stay within limits
-    #         kp_adapt[:2] *= kp_reduction
-        
-    #     ki_adapt = ki_base * ki_scale
-    #     kd_adapt = kd_base * kd_scale
-        
-    #     # =====================================================
-    #     # PID OUTPUT WITH BACK-CALCULATION
-    #     # =====================================================
-        
-    #     # Calculate preliminary output
-    #     p_term = kp_adapt * current_error
-    #     i_term = ki_adapt * self.fuzzy_error_integral
-    #     d_term = kd_adapt * self.filtered_derivative
-        
-    #     output_prelim = p_term + i_term + d_term
-        
-    #     # Anti-windup: if output would saturate, reduce integral
-    #     vx_enu_prelim = output_prelim[0]
-    #     vy_enu_prelim = output_prelim[1]
-        
-    #     # Check for saturation
-    #     if abs(vx_enu_prelim) > fuzzy_v_max:
-    #         # Back-calculation: reduce integral to prevent windup
-    #         excess = vx_enu_prelim - np.sign(vx_enu_prelim) * fuzzy_v_max
-    #         self.fuzzy_error_integral[0] -= excess * self.controller_dt * 0.5
-    #         output_prelim[0] = np.sign(vx_enu_prelim) * fuzzy_v_max
-        
-    #     if abs(vy_enu_prelim) > fuzzy_v_max:
-    #         excess = vy_enu_prelim - np.sign(vy_enu_prelim) * fuzzy_v_max
-    #         self.fuzzy_error_integral[1] -= excess * self.controller_dt * 0.5
-    #         output_prelim[1] = np.sign(vy_enu_prelim) * fuzzy_v_max
-        
-    #     # Extract final commands
-    #     vx_enu, vy_enu, vz_enu, wz_enu = output_prelim
-        
-    #     # ENU → FLU rotation
-    #     yaw = self.uav_yaw_in_odom_frame
-    #     vx_flu =  vx_enu * np.cos(yaw) + vy_enu * np.sin(yaw)
-    #     vy_flu = -vx_enu * np.sin(yaw) + vy_enu * np.cos(yaw)
-    #     vz_flu =  vz_enu
-    #     wz_flu =  wz_enu
-
-    #     # =====================================================================
-    #     # 🟢 MINIMAL VELOCITY FEEDFORWARD INJECTION 
-    #     # =====================================================================
-    #     # Inject UGV Velocity Feedforward to eliminate the long tail on the X-error
-    #     # caused by UGV motion, add the UGV's linear velocity directly to your final outputs. 
-    #     # Read the UGV's target velocity vector directly from your state estimations
-    #     # WE need a feedforward term to prevent the drone from lagging behind the UGV when it is moving at a steady speed.
-    #     # Because a standard PID controller is reactive, it cannot generate a velocity command unless an error already exists ($V = K_p \cdot e$).
-    #     # If your UGV is traveling at, say, 1.5m/s along the $X$-axis, your UAV must maintain a persistent, steady-state $X$-error just to make the PID output match that $1.5\text{ m/s}$ speed. Every time the UGV changes speed, accelerates, or decelerates, the standard PID lags behind, creating those $2\text{ m}$ transient humps you see in the blue line.Meanwhile, 
-    #     # because the UGV isn't moving along the $Y$-axis, the $Y$-error easily converges straight to zero.
-    #     vx_ugv_odom = self.ugv_lin_vel_in_jackal_odom_frame[0]
-    #     vy_ugv_odom = self.ugv_lin_vel_in_jackal_odom_frame[1]
-
-    #     # Rotate the UGV's Odom frame velocities into the UAV's Forward-Left-Up (FLU) frame
-    #     vx_ugv_ff =  vx_ugv_odom * np.cos(yaw) + vy_ugv_odom * np.sin(yaw)
-    #     vy_ugv_ff = -vx_ugv_odom * np.sin(yaw) + vy_ugv_odom * np.cos(yaw)
-
-    #     # Introduce a tuning factor (1.1 = inject 110% of target speed to force fast closing)
-    #     k_ff = 1.15
-
-    #     # Inject the feedforward term directly into your body-frame tracking outputs.
-    #     # This makes your drone actively match target speeds without waiting for tracking errors to build up first.
-    #     # Apply the scaling factor to the body-frame feedforward components
-    #     vx_flu += k_ff * vx_ugv_ff
-    #     vy_flu += k_ff * vy_ugv_ff
-        
-    #     # Final clipping (should rarely trigger now due to anti-saturation)
-    #     vx = np.clip(vx_flu, -fuzzy_v_max, fuzzy_v_max)
-    #     vy = np.clip(vy_flu, -fuzzy_v_max, fuzzy_v_max)
-    #     vz = np.clip(vz_flu, -fuzzy_vz_max, fuzzy_vz_max)
-    #     wz = np.clip(wz_flu, -fuzzy_yaw_max, fuzzy_yaw_max)
-        
-    #     # Oscillation detection and damping
-    #     if not hasattr(self, 'prev_vx_cmd'):
-    #         self.prev_vx_cmd = 0.0
-    #         self.prev_vy_cmd = 0.0
-        
-    #     # Detect sign changes (oscillation indicator)
-    #     vx_sign_change = (vx * self.prev_vx_cmd < 0) and (abs(vx) > 0.5) and (abs(self.prev_vx_cmd) > 0.5)
-    #     vy_sign_change = (vy * self.prev_vy_cmd < 0) and (abs(vy) > 0.5) and (abs(self.prev_vy_cmd) > 0.5)
-        
-    #     if vx_sign_change or vy_sign_change:
-    #         # Apply extra damping when oscillating detected
-    #         damping_factor = 0.7  # Reduce command by 30%
-    #         vx *= damping_factor
-    #         vy *= damping_factor
-    #         if np.random.rand() < 0.3:
-    #             self.get_logger().warn(f"Oscillation detected! Damping applied. Vx:{vx:.2f} Vy:{vy:.2f}")
-        
-    #     self.prev_vx_cmd = vx
-    #     self.prev_vy_cmd = vy
-        
-    #     # Debug logging
-    #     if np.random.rand() < 0.1:
-    #         self.get_logger().info(
-    #             f"FuzzyPID | Err:{e_pos_norm:.2f}m | "
-    #             f"Kp:[{kp_adapt[0]:.2f},{kp_adapt[1]:.2f}] "
-    #             f"Ki_s:{ki_scale:.2f} Kd_s:{kd_scale:.2f} | "
-    #             f"Cmd:[{vx:.2f},{vy:.2f},{vz:.2f}] | "
-    #             f"Sat:{'YES' if max(abs(vx_enu_prelim),abs(vy_enu_prelim))>fuzzy_v_max*0.95 else 'NO'}"
-    #         )
-        
-    #     self.publish_cmd([vx, vy, vz], wz)
-  
 
     def run_pid_logic(self):
         
@@ -1267,7 +1019,7 @@ def main(args=None):
     rclpy.init(args=args)
     
     # Selection logic
-    mode_selection = "Fuzzy-PID"  # Set to "MPC" or "PID" or "Fuzzy-PID"
+    mode_selection = "Fuzzy-PID"  # Set to "PID" or "Fuzzy-PID"
     node = Controller_for_UAV_Node(mode=mode_selection)
     
     try:
