@@ -98,7 +98,8 @@
     </include> 
 
     <include>
-      <uri>model://iris_with_gimbal</uri>
+      <!--<uri>model://iris_with_gimbal</uri>-->
+      <uri>model://iris_with_gimbal_lidar</uri>
       <name>iris</name>
       <pose degrees="true">0 0 0.195 0 0 90</pose>
     </include>
